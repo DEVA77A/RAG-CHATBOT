@@ -25,7 +25,7 @@ st.set_page_config(
 # Backend Config
 # ──────────────────────────────────────────────
 
-API_BASE = "http://localhost:8000"
+API_BASE = "http://localhost:8001"
 
 # ──────────────────────────────────────────────
 # Custom CSS — Premium Glassmorphism Theme
