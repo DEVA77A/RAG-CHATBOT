@@ -60,11 +60,12 @@ You don't just summarize websites. You explain WHY a website matters to a specif
 
 Core principles:
 - Be specific and actionable, never generic
-- Ground every insight in the actual website content
+- Ground every insight strictly in the actual website content provided; never assume or extrapolate beyond the text
 - Tailor everything to the user's persona
 - Surface hidden value that a casual reader would miss
 - When detecting opportunities, only include ones with evidence in the content
-- When scoring, be calibrated — not every website is a 0.9"""
+- When scoring, be calibrated — not every website is a 0.9
+- Do not hallucinate or use pretrained knowledge to make statements about the website that are not supported by the content"""
 
 
 # ──────────────────────────────────────────────
@@ -210,15 +211,16 @@ Be specific, actionable, and deeply relevant to a {persona_label}.
 }}
 
 CRITICAL INSTRUCTIONS:
-1. For "insights": Generate 3-5 categories with 2-3 items each. Categories must be persona-specific.
-2. For "action_plan": Generate 4-6 concrete, sequential steps. Each must be actionable TODAY.
+1. For "insights": Generate 3-5 categories with 2-3 items each. Categories must be persona-specific and directly supported by the website content.
+2. For "action_plan": Generate 4-6 concrete, sequential steps. Each must be actionable TODAY and directly supported by the website content.
 3. For "opportunities": ONLY include opportunities with evidence in the website content. If none found, return an empty array. Do NOT fabricate opportunities.
-4. For "skill_gap": Identify 4-6 required skills and 3-5 missing skills based on the website's domain.
+4. For "skill_gap": Identify 4-6 required skills and 3-5 missing skills based strictly on the website's domain as presented in the content. Do not extrapolate beyond the content.
 5. For "website_score": Each dimension in the "dimensions" array must be an object with "name" (string), "score" (float 0.0-1.0), and "reason" (string). Use ONLY these dimensions for a {persona_label}:
 {score_dims_str}
    Be calibrated — a documentation site might score high on Learning Value but low on Career Value.
-6. For "similar_websites": Suggest 3-5 real, well-known websites. They must be actual websites that exist.
+6. For "similar_websites": ONLY suggest sites explicitly mentioned or linked in the provided content or links list. If no similar sites are mentioned, return an empty array. Do NOT suggest websites from your general knowledge if they are not in the provided content.
 7. For "why_it_matters": Be deeply persona-specific. A student cares about learning, a job seeker cares about hiring, an investor cares about market position.
+8. GENERAL GROUNDING RULE: Do NOT fabricate or infer information not present in the content. Every insight, opportunity, action, and similar website suggestion must be directly supported by the website content.
 
 Return ONLY the JSON object. No markdown fences, no explanations, no text before or after the JSON."""
 
@@ -227,11 +229,14 @@ Return ONLY the JSON object. No markdown fences, no explanations, no text before
 # RAG Chat Prompt
 # ──────────────────────────────────────────────
 
-RAG_CHAT_PROMPT = """You are WebIntel AI, a personalized website intelligence assistant.
-You are helping a **{persona_label}** understand the website: {title} ({url}).
+RAG_CHAT_PROMPT = """You are answering a question about the website: {title} ({url}).
+The user has the persona of a **{persona_label}**.
 
-Use the following context extracted from the website to answer the user's question.
-If the context doesn't contain enough information, say so honestly — do not make things up.
+You MUST answer the user's question ONLY using the provided relevant context chunks.
+Do NOT use your general knowledge, prior training, or make assumptions. Every claim in your response must be traceable to a specific source in the context (refer to [Source 1], [Source 2], etc.).
+
+If the question is unrelated to the website domain, topics, products, or services (as described in the retrieved chunks), respond with exactly: "This question is unrelated to the analyzed website." and do not provide any further explanation or other text.
+If the context does not contain the answer, respond exactly with: "Information not found in analyzed website content." and do not provide any further explanation or other text.
 
 --- RELEVANT CONTEXT ---
 {context}
@@ -244,8 +249,8 @@ User's Question: {question}
 Instructions:
 - Answer specifically for a {persona_label} — tailor your language and focus
 - Be concise but thorough
-- If you reference information from the context, mention which part
-- If the question is about opportunities, skills, or relevance, leverage your persona expertise
+- You MUST reference information from the context by mentioning the source label (e.g., [Source N])
+- If the answer is not in the context, you MUST refuse to answer using the exact sentence: "Information not found in analyzed website content."
 - Do not repeat the question back to the user"""
 
 
@@ -264,6 +269,7 @@ def build_chat_prompt(
     context_parts = []
     for i, chunk in enumerate(context_chunks, 1):
         content = chunk.get("content", "")
+        # Try to read score from chunk, default to 0.0
         score = chunk.get("score", 0.0)
         context_parts.append(f"[Source {i}] (relevance: {score:.2f})\n{content}")
 
@@ -276,8 +282,10 @@ def build_chat_prompt(
         # Only include last 6 messages to fit context
         recent = chat_history[-6:]
         for msg in recent:
+            # Skip messages containing sources/metadata to avoid cluttering context
             role = "User" if msg.get("role") == "user" else "Assistant"
-            history_lines.append(f"{role}: {msg.get('content', '')}")
+            content = msg.get("content", "")
+            history_lines.append(f"{role}: {content}")
         history_section = "Previous conversation:\n" + "\n".join(history_lines) + "\n"
 
     return RAG_CHAT_PROMPT.format(

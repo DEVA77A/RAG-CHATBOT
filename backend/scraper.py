@@ -7,6 +7,7 @@ Strategy:
   3. Combined output: title, description, clean text content, links
 """
 
+import asyncio
 import hashlib
 import logging
 from urllib.parse import urlparse, urljoin
@@ -109,7 +110,7 @@ async def _fetch_html(url: str) -> str | None:
     try:
         async with httpx.AsyncClient(
             follow_redirects=True,
-            timeout=30.0,
+            timeout=7.0,
             verify=False  # Some sites have cert issues; acceptable for a hackathon
         ) as client:
             response = await client.get(url, headers=headers)
@@ -193,3 +194,134 @@ def _fallback_extract(soup: BeautifulSoup) -> str:
         return "\n".join(lines)
 
     return ""
+
+
+async def crawl_website(start_url: str, max_pages: int = 6) -> list[dict]:
+    """
+    Recursively crawl internal pages starting from start_url in parallel batches.
+    Prioritizes pages that contain keywords like 'about', 'product', 'docs', etc.
+    
+    Returns:
+        List of dicts, each representing a scraped page:
+        [{"url": url, "title": title, "content": content, "description": desc}, ...]
+    """
+    parsed_start = urlparse(start_url)
+    start_domain = parsed_start.netloc
+    
+    visited = set()
+    pages = []
+    
+    # 1. Fetch homepage first
+    norm_start = start_url.split("#")[0].rstrip("/")
+    visited.add(norm_start)
+    
+    logger.info(f"Crawling start URL homepage: {start_url}")
+    try:
+        homepage_res = await scrape_url(start_url)
+    except Exception as e:
+        logger.error(f"Failed to scrape start URL {start_url}: {e}")
+        return []
+        
+    if not homepage_res or not homepage_res.get("success"):
+        logger.warning(f"Could not scrape start URL homepage successfully")
+        return []
+        
+    pages.append({
+        "url": homepage_res["url"],
+        "title": homepage_res["title"],
+        "description": homepage_res["description"],
+        "content": homepage_res["content"]
+    })
+    
+    # Queue stores (url, priority)
+    queue = []
+    
+    def add_links_to_queue(links, current_url):
+        for link in links:
+            link_parsed = urlparse(link)
+            # Ensure it's internal (same domain)
+            if link_parsed.netloc == start_domain or (not link_parsed.netloc and link.startswith("/")):
+                # Resolve relative link if necessary
+                full_link = link if link_parsed.netloc else urljoin(current_url, link)
+                full_link_parsed = urlparse(full_link)
+                link_norm = full_link.split("#")[0].rstrip("/")
+                
+                if link_norm not in visited:
+                    # Determine priority
+                    path = full_link_parsed.path.lower()
+                    query = full_link_parsed.query.lower()
+                    priority = 0
+                    
+                    # Keywords to prioritize
+                    keywords = [
+                        "about", "product", "docs", "doc", "api", "pricing", 
+                        "features", "faq", "guide", "learn", "download", 
+                        "readme", "developer", "support"
+                    ]
+                    if any(kw in path or kw in query for kw in keywords):
+                        priority = 1
+                    
+                    # Check if already in queue, keep highest priority
+                    in_queue_idx = -1
+                    for idx, (q_url, q_pri) in enumerate(queue):
+                        if q_url.split("#")[0].rstrip("/") == link_norm:
+                            in_queue_idx = idx
+                            break
+                    if in_queue_idx != -1:
+                        if priority > queue[in_queue_idx][1]:
+                            queue[in_queue_idx] = (full_link, priority)
+                    else:
+                        queue.append((full_link, priority))
+
+    add_links_to_queue(homepage_res.get("links", []), start_url)
+    
+    # Process queue in parallel batches
+    batch_size = 5
+    
+    while queue and len(pages) < max_pages:
+        # Sort queue by priority descending
+        queue.sort(key=lambda x: x[1], reverse=True)
+        
+        # Determine how many pages we still need
+        needed = max_pages - len(pages)
+        current_batch_size = min(batch_size, needed, len(queue))
+        
+        batch = []
+        for _ in range(current_batch_size):
+            batch.append(queue.pop(0))
+            
+        # Extract URLs and filter out if already visited (in case of duplicates)
+        batch_urls = []
+        for u, pri in batch:
+            norm = u.split("#")[0].rstrip("/")
+            if norm not in visited:
+                visited.add(norm)
+                batch_urls.append(u)
+                
+        if not batch_urls:
+            continue
+            
+        logger.info(f"Crawling batch of {len(batch_urls)} URLs in parallel: {batch_urls}")
+        
+        # Fetch batch in parallel
+        tasks = [scrape_url(u) for u in batch_urls]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for res in results:
+            if isinstance(res, Exception):
+                logger.error(f"Error in batch scrape task: {res}")
+                continue
+            if not res or not res.get("success"):
+                continue
+                
+            pages.append({
+                "url": res["url"],
+                "title": res["title"],
+                "description": res["description"],
+                "content": res["content"]
+            })
+            
+            # Extract links and add to queue
+            add_links_to_queue(res.get("links", []), res["url"])
+            
+    return pages

@@ -38,6 +38,7 @@ class AnalyzeRequest(BaseModel):
 class ChatRequest(BaseModel):
     analysis_id: str = Field(..., description="Analysis ID to chat about")
     message: str = Field(..., description="User's question")
+    debug: bool = Field(False, description="Enable debug mode to return RAG pipeline metrics")
 
 
 # ──────────────────────────────────────────────
@@ -147,6 +148,19 @@ class MegaPromptOutput(BaseModel):
 # API Response Models
 # ──────────────────────────────────────────────
 
+class IndexedPage(BaseModel):
+    url: str
+    title: str
+    chunk_count: int
+    char_count: int
+
+
+class KBStats(BaseModel):
+    total_pages: int
+    total_chunks: int
+    total_chars: int
+
+
 class AnalyzeResponse(BaseModel):
     id: str
     url: str
@@ -161,17 +175,25 @@ class AnalyzeResponse(BaseModel):
     skill_gap: SkillGap = SkillGap()
     website_score: WebsiteScore = WebsiteScore()
     why_it_matters: WhyItMatters = WhyItMatters()
-    similar_websites: list["SimilarWebsite"] = []
+    similar_websites: list[SimilarWebsite] = []
+    indexed_pages: list[IndexedPage] = []
+    kb_stats: KBStats = KBStats(total_pages=0, total_chunks=0, total_chars=0)
 
 
 class ChatSource(BaseModel):
+    chunk_id: int
+    url: str
     content: str
+    chunk_text: str
     score: float
 
 
 class ChatResponse(BaseModel):
     answer: str
     sources: list[ChatSource] = []
+    chunk_count: int = 0
+    avg_similarity: float = 0.0
+    debug: dict | None = None
 
 
 class HealthResponse(BaseModel):
