@@ -146,6 +146,14 @@ class FAISSStore:
         )
         return store
 
+    def get_all_chunks(self) -> list[str]:
+        """Return all stored chunk texts (for BM25 indexing)."""
+        return self.chunks
+
+    def get_all_metadata(self) -> list[dict]:
+        """Return all stored metadata dicts."""
+        return self.metadata
+
     @staticmethod
     def exists(analysis_id: str) -> bool:
         """Check if a FAISS index exists for the given analysis."""

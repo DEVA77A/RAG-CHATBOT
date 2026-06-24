@@ -18,6 +18,9 @@ sentence-transformers==4.1.0
 # --- Vector Database ---
 faiss-cpu==1.14.3
 
+# --- Sparse Retrieval ---
+rank-bm25
+
 # --- Database ---
 aiosqlite==0.21.0
 

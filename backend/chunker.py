@@ -1,8 +1,10 @@
 """
-WebIntel AI — Text Chunker + Embedding Generator
+WebIntel AI — Section-Aware Text Chunker + Embedding Generator
+
+Chunks text into overlapping segments while preserving heading/section metadata.
+Each chunk carries: heading, section_type (intro/body/appendix), page_title, page_url.
 
 Uses sentence-transformers (all-MiniLM-L6-v2) for local, free embeddings.
-Chunks text with overlap for better retrieval context.
 
 Model specs:
   - Dimensions: 384
@@ -12,13 +14,14 @@ Model specs:
 """
 
 import logging
+import re
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────
-# Global model (loaded once at import time)
+# Global model (loaded once)
 # ──────────────────────────────────────────────
 
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
@@ -38,8 +41,171 @@ def get_model() -> SentenceTransformer:
 
 
 # ──────────────────────────────────────────────
-# Chunking
+# Section-Aware Chunking
 # ──────────────────────────────────────────────
+
+# Patterns that indicate a heading line
+_HEADING_PATTERNS = [
+    re.compile(r"^#{1,4}\s+(.+)$"),                # Markdown: # Heading
+    re.compile(r"^(.+)\n[=]{3,}$", re.MULTILINE),  # Underline ===
+    re.compile(r"^(.+)\n[-]{3,}$", re.MULTILINE),  # Underline ---
+]
+
+# Keywords that signal "introductory" sections
+_INTRO_KEYWORDS = {
+    "introduction", "overview", "getting started", "welcome", "about",
+    "quick start", "quickstart", "summary", "home", "index", "what is",
+    "tutorial", "guide", "basics", "first steps",
+}
+
+# Keywords that signal appendix/reference sections
+_APPENDIX_KEYWORDS = {
+    "appendix", "reference", "changelog", "license", "credits",
+    "glossary", "footnotes", "bibliography",
+}
+
+
+def _detect_section_type(heading: str, page_url: str = "") -> str:
+    """Classify section as intro/body/appendix based on heading text and URL."""
+    lower_heading = heading.lower().strip()
+    lower_url = page_url.lower()
+
+    # Check URL path for clues
+    for kw in _INTRO_KEYWORDS:
+        if kw in lower_heading or kw in lower_url:
+            return "intro"
+
+    for kw in _APPENDIX_KEYWORDS:
+        if kw in lower_heading or kw in lower_url:
+            return "appendix"
+
+    return "body"
+
+
+def _extract_heading(line: str) -> str | None:
+    """Try to extract a heading from a line of text."""
+    stripped = line.strip()
+    # Markdown headings
+    match = re.match(r"^#{1,4}\s+(.+)$", stripped)
+    if match:
+        return match.group(1).strip()
+    # Bold-style pseudo-headings (common in scraped text)
+    match = re.match(r"^\*\*(.+)\*\*$", stripped)
+    if match and len(match.group(1)) < 100:
+        return match.group(1).strip()
+    return None
+
+
+def chunk_text_with_metadata(
+    text: str,
+    page_title: str = "",
+    page_url: str = "",
+    chunk_size: int = 500,
+    chunk_overlap: int = 50
+) -> list[dict]:
+    """
+    Split text into overlapping chunks while tracking headings and sections.
+
+    Returns list of dicts:
+        [{
+            "text": str,           # The chunk text
+            "heading": str,        # Current heading context
+            "section_type": str,   # "intro" | "body" | "appendix"
+            "page_title": str,
+            "page_url": str,
+        }, ...]
+    """
+    if not text or not text.strip():
+        return []
+
+    text = text.strip()
+
+    # First pass: split into sections by headings
+    lines = text.split("\n")
+    sections = []
+    current_heading = page_title or "Main Content"
+    current_lines = []
+
+    for line in lines:
+        heading = _extract_heading(line)
+        if heading:
+            # Flush current section
+            if current_lines:
+                section_text = "\n".join(current_lines).strip()
+                if section_text:
+                    sections.append({
+                        "heading": current_heading,
+                        "text": section_text,
+                    })
+            current_heading = heading
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    # Flush last section
+    if current_lines:
+        section_text = "\n".join(current_lines).strip()
+        if section_text:
+            sections.append({
+                "heading": current_heading,
+                "text": section_text,
+            })
+
+    # If no sections found, treat entire text as one section
+    if not sections:
+        sections = [{"heading": page_title or "Main Content", "text": text}]
+
+    # Second pass: chunk each section with overlap
+    all_chunks = []
+    for section in sections:
+        section_type = _detect_section_type(section["heading"], page_url)
+        section_text = section["text"]
+
+        # Prefix chunk with heading context for better retrieval
+        heading_prefix = f"[{section['heading']}] " if section['heading'] else ""
+
+        if len(section_text) <= chunk_size:
+            all_chunks.append({
+                "text": heading_prefix + section_text,
+                "heading": section["heading"],
+                "section_type": section_type,
+                "page_title": page_title,
+                "page_url": page_url,
+            })
+        else:
+            # Split into overlapping chunks
+            start = 0
+            while start < len(section_text):
+                end = start + chunk_size
+
+                if end < len(section_text):
+                    # Find good break point
+                    for sep in ["\n\n", ". ", ".\n", "! ", "? ", "\n"]:
+                        brk = section_text.rfind(sep, start, end)
+                        if brk > start + chunk_size // 3:
+                            end = brk + len(sep)
+                            break
+                    else:
+                        space = section_text.rfind(" ", start, end)
+                        if space > start + chunk_size // 3:
+                            end = space + 1
+
+                chunk = section_text[start:end].strip()
+                if chunk:
+                    all_chunks.append({
+                        "text": heading_prefix + chunk,
+                        "heading": section["heading"],
+                        "section_type": section_type,
+                        "page_title": page_title,
+                        "page_url": page_url,
+                    })
+
+                start = end - chunk_overlap
+                if start <= (end - chunk_size):
+                    start = end
+
+    return all_chunks
+
 
 def chunk_text(
     text: str,
@@ -47,66 +213,11 @@ def chunk_text(
     chunk_overlap: int = 50
 ) -> list[str]:
     """
-    Split text into overlapping chunks by character count.
-
-    Tries to split on paragraph boundaries first, then sentence boundaries,
-    then falls back to character-level splitting.
-
-    Args:
-        text: The full text to chunk.
-        chunk_size: Target characters per chunk.
-        chunk_overlap: Overlap between consecutive chunks.
-
-    Returns:
-        List of text chunks.
+    Legacy interface — split text into overlapping chunks (plain strings).
+    Used by any code that doesn't need metadata.
     """
-    if not text or not text.strip():
-        return []
-
-    text = text.strip()
-
-    # If text is short enough, return as a single chunk
-    if len(text) <= chunk_size:
-        return [text]
-
-    chunks = []
-    start = 0
-
-    while start < len(text):
-        end = start + chunk_size
-
-        # If we're not at the end, try to find a good break point
-        if end < len(text):
-            # Try to break at paragraph boundary
-            para_break = text.rfind("\n\n", start, end)
-            if para_break > start + chunk_size // 2:
-                end = para_break + 2  # Include the newlines
-
-            else:
-                # Try to break at sentence boundary
-                for sep in [". ", ".\n", "! ", "? ", "\n"]:
-                    sent_break = text.rfind(sep, start, end)
-                    if sent_break > start + chunk_size // 3:
-                        end = sent_break + len(sep)
-                        break
-
-                else:
-                    # Try to break at word boundary
-                    space_break = text.rfind(" ", start, end)
-                    if space_break > start + chunk_size // 3:
-                        end = space_break + 1
-
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-
-        # Move start forward, accounting for overlap
-        start = end - chunk_overlap
-        if start <= (end - chunk_size):
-            # Prevent infinite loop if overlap >= chunk_size
-            start = end
-
-    return chunks
+    chunks = chunk_text_with_metadata(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    return [c["text"] for c in chunks]
 
 
 # ──────────────────────────────────────────────
@@ -116,9 +227,6 @@ def chunk_text(
 def embed_texts(texts: list[str]) -> np.ndarray:
     """
     Generate normalized embeddings for a list of texts.
-
-    Args:
-        texts: List of strings to embed.
 
     Returns:
         numpy array of shape (len(texts), 384) with L2-normalized vectors.
@@ -131,7 +239,7 @@ def embed_texts(texts: list[str]) -> np.ndarray:
         texts,
         normalize_embeddings=True,
         show_progress_bar=False,
-        batch_size=32
+        batch_size=64  # Larger batch for speed
     )
     return np.array(embeddings, dtype=np.float32)
 

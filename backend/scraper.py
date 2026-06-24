@@ -81,6 +81,9 @@ async def scrape_url(url: str) -> dict:
             result["error"] = "Could not extract meaningful content from this website."
             return result
 
+        # Convert relative markdown links/images to absolute URLs
+        content = _make_links_absolute(content, url)
+
         # Truncate to fit LLM context window
         content = content[:MAX_CONTENT_LENGTH]
 
@@ -281,24 +284,17 @@ Contact our hiring team at careers@{domain} or check our developer portal.
     return pages
 
 
-async def crawl_website(start_url: str, max_pages: int = 6) -> list[dict]:
+async def crawl_website(start_url: str, max_pages: int = 10) -> list[dict]:
     """
     Recursively crawl internal pages starting from start_url in parallel batches.
     Prioritizes pages that contain keywords like 'about', 'product', 'docs', etc.
     
     Returns:
         List of dicts, each representing a scraped page:
-        [{"url": url, "title": title, "content": content, "description": desc}, ...]
+        [{"url": url, "title": title, "content": content, "description": desc, "content_hash": hash}, ...]
     """
     parsed_start = urlparse(start_url)
     start_domain = parsed_start.netloc
-    
-    visited = set()
-    pages = []
-    
-    # 1. Fetch homepage first
-    norm_start = start_url.split("#")[0].rstrip("/")
-    visited.add(norm_start)
     
     logger.info(f"Crawling start URL homepage: {start_url}")
     homepage_res = None
@@ -311,102 +307,165 @@ async def crawl_website(start_url: str, max_pages: int = 6) -> list[dict]:
         logger.warning(f"Could not scrape start URL homepage successfully. Falling back to simulated pages for {start_url}.")
         return _generate_mock_pages(start_url)
         
+    pages = []
+    seen_urls = set()
+    seen_hashes = set()
+    
+    homepage_norm = start_url.split("#")[0].rstrip("/")
+    seen_urls.add(homepage_norm)
+    
+    hp_hash = homepage_res.get("content_hash")
+    if hp_hash:
+        seen_hashes.add(hp_hash)
+        
     pages.append({
         "url": homepage_res["url"],
         "title": homepage_res["title"],
         "description": homepage_res["description"],
-        "content": homepage_res["content"]
+        "content": homepage_res["content"],
+        "content_hash": hp_hash
     })
     
-    # Queue stores (url, priority)
-    queue = []
-    
-    def add_links_to_queue(links, current_url):
-        for link in links:
-            link_parsed = urlparse(link)
-            # Ensure it's internal (same domain)
-            if link_parsed.netloc == start_domain or (not link_parsed.netloc and link.startswith("/")):
-                # Resolve relative link if necessary
-                full_link = link if link_parsed.netloc else urljoin(current_url, link)
-                full_link_parsed = urlparse(full_link)
-                link_norm = full_link.split("#")[0].rstrip("/")
-                
-                if link_norm not in visited:
-                    # Determine priority
-                    path = full_link_parsed.path.lower()
-                    query = full_link_parsed.query.lower()
-                    priority = 0
-                    
-                    # Keywords to prioritize
-                    keywords = [
-                        "about", "product", "docs", "doc", "api", "pricing", 
-                        "features", "faq", "guide", "learn", "download", 
-                        "readme", "developer", "support"
-                    ]
-                    if any(kw in path or kw in query for kw in keywords):
-                        priority = 1
-                    
-                    # Check if already in queue, keep highest priority
-                    in_queue_idx = -1
-                    for idx, (q_url, q_pri) in enumerate(queue):
-                        if q_url.split("#")[0].rstrip("/") == link_norm:
-                            in_queue_idx = idx
-                            break
-                    if in_queue_idx != -1:
-                        if priority > queue[in_queue_idx][1]:
-                            queue[in_queue_idx] = (full_link, priority)
-                    else:
-                        queue.append((full_link, priority))
-
-    add_links_to_queue(homepage_res.get("links", []), start_url)
-    
-    # Process queue in parallel batches
-    batch_size = 5
-    
-    while queue and len(pages) < max_pages:
-        # Sort queue by priority descending
-        queue.sort(key=lambda x: x[1], reverse=True)
+    def is_ignored(url_str: str) -> bool:
+        parsed = urlparse(url_str)
+        path = parsed.path.lower()
+        query = parsed.query.lower()
         
-        # Determine how many pages we still need
-        needed = max_pages - len(pages)
-        current_batch_size = min(batch_size, needed, len(queue))
-        
-        batch = []
-        for _ in range(current_batch_size):
-            batch.append(queue.pop(0))
+        # Explicit ignore list from requirements
+        ignore_kws = [
+            "login", "signin", "signup", "register", "logout",
+            "account", "profile", "privacy", "terms", "tos", "policy",
+            "careers", "jobs", "job", "career"
+        ]
+        if any(kw in path or kw in query for kw in ignore_kws):
+            return True
             
-        # Extract URLs and filter out if already visited (in case of duplicates)
-        batch_urls = []
-        for u, pri in batch:
-            norm = u.split("#")[0].rstrip("/")
-            if norm not in visited:
-                visited.add(norm)
-                batch_urls.append(u)
-                
-        if not batch_urls:
+        # Social media domains
+        social_domains = [
+            "facebook.com", "twitter.com", "x.com", "linkedin.com",
+            "instagram.com", "youtube.com", "pinterest.com", "reddit.com"
+        ]
+        netloc = parsed.netloc.lower()
+        if any(domain in netloc for domain in social_domains) and start_domain not in netloc:
+            return True
+            
+        # Static files
+        if path.endswith((".pdf", ".png", ".jpg", ".jpeg", ".gif", ".zip", ".tar.gz", ".dmg", ".exe", ".css", ".js")):
+            return True
+            
+        return False
+        
+    def get_priority(url_str: str) -> int:
+        parsed = urlparse(url_str)
+        path = parsed.path.lower()
+        query = parsed.query.lower()
+        
+        # Priority order:
+        # 1. docs
+        # 2. api
+        # 3. about
+        # 4. product
+        # 5. features
+        # 6. pricing
+        # 7. faq
+        # 8. guides
+        if any(x in path or x in query for x in ["docs", "doc", "readme"]):
+            return 80
+        if any(x in path or x in query for x in ["api", "apis"]):
+            return 70
+        if "about" in path or "about" in query:
+            return 60
+        if any(x in path or x in query for x in ["product", "products"]):
+            return 50
+        if any(x in path or x in query for x in ["features", "feature"]):
+            return 40
+        if any(x in path or x in query for x in ["pricing", "prices"]):
+            return 30
+        if any(x in path or x in query for x in ["faq", "faqs"]):
+            return 20
+        if any(x in path or x in query for x in ["guides", "guide", "tutorial", "learn"]):
+            return 10
+        return 0
+
+    # Extract and filter candidate links
+    candidates = []
+    for link in homepage_res.get("links", []):
+        link_parsed = urlparse(link)
+        is_internal = (link_parsed.netloc == start_domain) or (not link_parsed.netloc and link.startswith("/"))
+        if not is_internal:
             continue
             
-        logger.info(f"Crawling batch of {len(batch_urls)} URLs in parallel: {batch_urls}")
+        full_link = link if link_parsed.netloc else urljoin(start_url, link)
+        norm_link = full_link.split("#")[0].rstrip("/")
         
-        # Fetch batch in parallel
-        tasks = [scrape_url(u) for u in batch_urls]
+        if norm_link in seen_urls:
+            continue
+            
+        if is_ignored(full_link):
+            continue
+            
+        priority = get_priority(full_link)
+        candidates.append((full_link, norm_link, priority))
+        
+    # Deduplicate candidate URLs
+    unique_candidates = {}
+    for fl, nl, pri in candidates:
+        if nl not in unique_candidates or pri > unique_candidates[nl][2]:
+            unique_candidates[nl] = (fl, nl, pri)
+            
+    sorted_candidates = sorted(unique_candidates.values(), key=lambda x: x[2], reverse=True)
+    
+    # Limit number of subpages to fetch
+    to_crawl = sorted_candidates[:max_pages - 1]
+    
+    if to_crawl:
+        logger.info(f"Concurrently scraping {len(to_crawl)} prioritized internal subpages.")
+        tasks = [scrape_url(x[0]) for x in to_crawl]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         for res in results:
-            if isinstance(res, Exception):
-                logger.error(f"Error in batch scrape task: {res}")
-                continue
-            if not res or not res.get("success"):
+            if isinstance(res, Exception) or not res or not res.get("success"):
                 continue
                 
+            c_hash = res.get("content_hash")
+            if c_hash in seen_hashes:
+                logger.info(f"Skipping duplicate content page: {res['url']}")
+                continue
+                
+            seen_hashes.add(c_hash)
             pages.append({
                 "url": res["url"],
                 "title": res["title"],
                 "description": res["description"],
-                "content": res["content"]
+                "content": res["content"],
+                "content_hash": c_hash
             })
             
-            # Extract links and add to queue
-            add_links_to_queue(res.get("links", []), res["url"])
-            
     return pages
+
+
+def _make_links_absolute(text: str, base_url: str) -> str:
+    """Convert relative markdown links and images to absolute URLs relative to base_url."""
+    import re
+    from urllib.parse import urljoin
+    
+    if not text:
+        return ""
+        
+    # Match optional ! followed by [link text](url)
+    pattern = r'(!?)\[([^\]]*)\]\(([^)]*)\)'
+    
+    def replacer(match):
+        img_prefix = match.group(1)
+        link_text = match.group(2)
+        link_url = match.group(3).strip()
+        
+        # If it starts with scheme, tel, mailto or is fragment, leave it
+        if (link_url.startswith(("http://", "https://", "mailto:", "tel:", "#")) 
+            or not link_url):
+            return match.group(0)
+            
+        abs_url = urljoin(base_url, link_url)
+        return f"{img_prefix}[{link_text}]({abs_url})"
+        
+    return re.sub(pattern, replacer, text)

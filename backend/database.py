@@ -37,7 +37,11 @@ CREATE TABLE IF NOT EXISTS analyses (
     similar_websites TEXT,
     scraped_content TEXT,
     content_hash TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    crawl_time REAL DEFAULT 0.0,
+    index_time REAL DEFAULT 0.0,
+    generation_time REAL DEFAULT 0.0,
+    total_time REAL DEFAULT 0.0
 );
 
 CREATE TABLE IF NOT EXISTS chat_messages (
@@ -56,11 +60,26 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 # ──────────────────────────────────────────────
 
 async def init_db():
-    """Create the data directory and initialize tables."""
+    """Create the data directory and initialize tables with dynamic column self-healing migrations."""
     os.makedirs(DATABASE_DIR, exist_ok=True)
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.executescript(SCHEMA_SQL)
         await db.commit()
+        
+        # Self-healing migration for existing databases:
+        columns_to_add = [
+            ("crawl_time", "REAL DEFAULT 0.0"),
+            ("index_time", "REAL DEFAULT 0.0"),
+            ("generation_time", "REAL DEFAULT 0.0"),
+            ("total_time", "REAL DEFAULT 0.0")
+        ]
+        for col_name, col_type in columns_to_add:
+            try:
+                await db.execute(f"ALTER TABLE analyses ADD COLUMN {col_name} {col_type}")
+                await db.commit()
+            except Exception:
+                # Column likely already exists, ignore error
+                pass
 
 
 # ──────────────────────────────────────────────
