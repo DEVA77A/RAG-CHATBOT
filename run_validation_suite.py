@@ -11,10 +11,12 @@ TEST_CASES = [
         "url": "https://react.dev/",
         "questions": [
             "What is React?",
+            "How does it work?",
             "Difference between Props and State",
             "Rules of Hooks",
             "What is React Compiler?",
-            "What is React pricing?"
+            "What is React pricing?",
+            "Summarize this website."
         ]
     },
     {
@@ -22,7 +24,8 @@ TEST_CASES = [
         "url": "https://docs.python.org/3/tutorial/appetite.html",
         "questions": [
             "What is Python?",
-            "What is OOP?"
+            "What is OOP?",
+            "Explain this website."
         ]
     },
     {
@@ -37,6 +40,21 @@ TEST_CASES = [
         "url": "https://github.com/about",
         "questions": [
             "What are GitHub Actions?"
+        ]
+    },
+    {
+        "name": "Hugging Face",
+        "url": "https://huggingface.co/",
+        "questions": [
+            "What is Hugging Face?",
+            "What did you learn from this website?"
+        ]
+    },
+    {
+        "name": "GeeksforGeeks",
+        "url": "https://www.geeksforgeeks.org/",
+        "questions": [
+            "What is GeeksforGeeks?"
         ]
     },
     {
@@ -100,7 +118,7 @@ def run_suite():
                     "Information not found", 
                     "unrelated to the indexed website",
                     "could not find pricing information",
-                    "was not indexed during crawling"
+                    "was not indexed"
                 ])
                 
                 if is_refusal:

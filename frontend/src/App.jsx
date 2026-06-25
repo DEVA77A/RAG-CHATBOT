@@ -29,6 +29,7 @@ function App() {
   const [debugData, setDebugData] = useState(null);
   const [showDebug, setShowDebug] = useState(false);
   const [llmHealth, setLlmHealth] = useState({claude: "Checking...", gemini: "Checking..."});
+  const [showDocRec, setShowDocRec] = useState(false);
 
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -41,6 +42,19 @@ function App() {
   useEffect(() => {
     scrollToBottom();
   }, [messages, isTyping]);
+
+  // Automatically recommend higher depth for docs sites
+  useEffect(() => {
+    const isDoc = /docs|doc|learn|guide|tutorial|wiki|api|reference|react\.dev|python\.org|tiangolo\.com|github\.com|huggingface\.co|geeksforgeeks\.org/i.test(url);
+    if (isDoc && url.trim().length > 10) {
+      setShowDocRec(true);
+      if (maxPages === 10) {
+        setMaxPages(25);
+      }
+    } else {
+      setShowDocRec(false);
+    }
+  }, [url]);
 
   // Load history list and health on mount
   useEffect(() => {
@@ -314,14 +328,19 @@ function App() {
                 <label>Max Pages:</label>
                 <select
                   value={maxPages}
-                  onChange={(e) => setMaxPages(e.target.value)}
+                  onChange={(e) => setMaxPages(parseInt(e.target.value, 10))}
                   disabled={status === 'crawling'}
                 >
-                  <option value={5}>5 (Fast)</option>
                   <option value={10}>10 (Standard)</option>
-                  <option value={20}>20 (Deep)</option>
+                  <option value={25}>25 (Deep)</option>
+                  <option value={50}>50 (Full)</option>
                 </select>
               </div>
+              {showDocRec && (
+                <div style={{ fontSize: '11px', color: '#10b981', marginTop: '-6px', marginBottom: '10px', fontWeight: '500' }}>
+                  💡 Recommended: 25 or 50 pages for documentation!
+                </div>
+              )}
               <button
                 type="submit"
                 className="btn-primary"

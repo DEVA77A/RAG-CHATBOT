@@ -157,7 +157,7 @@ async def analyze_endpoint(request: AnalyzeRequest):
     """
     t_start = time.perf_counter()
     url = str(request.url).strip()
-    max_pages = min(request.max_pages, 20)  # Cap at 20
+    max_pages = min(request.max_pages, 100)  # Cap at 100
 
     # Validate URL
     parsed = urlparse(url)
@@ -291,6 +291,26 @@ async def analyze_endpoint(request: AnalyzeRequest):
 # POST /api/chat — Hybrid RAG Chat
 # ──────────────────────────────────────────────
 
+def is_summary_query(query: str, chat_history: list[dict] | None = None) -> bool:
+    """Check if the question has a 'website summary' intent."""
+    q = query.lower().strip().replace("?", "").replace(".", "")
+    summary_phrases = {
+        "summarize this website", "summarise this website",
+        "summarize the website", "summarise the website",
+        "explain this website", "explain this site",
+        "website summary", "website overview",
+        "give me an overview of this website", "give me an overview of the website",
+        "what did you learn from this website", "what did you learn from this site",
+        "what did you learn", "explain the website", "explain the site"
+    }
+    if any(phrase in q for phrase in summary_phrases):
+        return True
+    is_first = not chat_history or len(chat_history) == 0
+    if is_first and q in {"summarize it", "summarise it", "give me an overview", "overview", "summarize", "summarise"}:
+        return True
+    return False
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
     """
@@ -319,20 +339,76 @@ async def chat_endpoint(request: ChatRequest):
 
     store = FAISSStore.load(analysis_id)
 
-    # Simple FAISS search
-    t_search_start = time.perf_counter()
-    search_result = simple_search(
-        query=question,
-        faiss_store=store,
-        embed_fn=embed_query,
-        top_k=top_k,
-    )
-    retrieval_duration = time.perf_counter() - t_search_start
-
-    context_chunks = search_result["chunks"]
-
     # Get chat history
     history = await get_chat_history(analysis_id, limit=10)
+
+    # Detect website summary intent
+    is_summary = is_summary_query(question, history)
+
+    if is_summary:
+        logger.info(f"Summary intent detected for query: '{question}'")
+        all_metadata = store.get_all_metadata()
+        all_chunks = store.get_all_chunks()
+        
+        # Group chunks by unique page URL
+        page_chunks = {}
+        for idx, meta in enumerate(all_metadata):
+            url = meta.get("source_url") or meta.get("url") or "default_url"
+            if url not in page_chunks:
+                page_chunks[url] = []
+            page_chunks[url].append((idx, meta.get("chunk_id", idx)))
+            
+        summary_indices = []
+        for url, idx_list in page_chunks.items():
+            # Sort by chunk_id ascending
+            idx_list.sort(key=lambda x: x[1])
+            # Take the first 2 chunks representing the page's introduction/top section
+            for item in idx_list[:2]:
+                summary_indices.append(item[0])
+                
+        # Also include chunks marked as 'intro' section
+        for idx, meta in enumerate(all_metadata):
+            if meta.get("section_type") == "intro" and idx not in summary_indices:
+                summary_indices.append(idx)
+                
+        # Cap the summary context size to fit LLM window
+        summary_indices = summary_indices[:15]
+        
+        context_chunks = []
+        for idx in summary_indices:
+            context_chunks.append({
+                "content": all_chunks[idx],
+                "score": 0.80,  # High score to pass validation check
+                "metadata": all_metadata[idx]
+            })
+            
+        retrieval_duration = 0.01
+        search_result = {
+            "chunks": context_chunks,
+            "expanded_queries": [],
+            "debug": {
+                "search_type": "website_summary",
+                "query": question,
+                "raw_results": len(context_chunks),
+                "query_emb": []
+            }
+        }
+        # Steer LLM system to write a complete website summary/overview
+        chat_question = f"[WEBSITE SUMMARY REQUEST] {question}"
+    else:
+        # Normal FAISS search with query expansion for follow-up conversation context
+        t_search_start = time.perf_counter()
+        search_result = simple_search(
+            query=question,
+            faiss_store=store,
+            embed_fn=embed_query,
+            top_k=top_k,
+            chat_history=history
+        )
+        retrieval_duration = time.perf_counter() - t_search_start
+        chat_question = question
+
+    context_chunks = search_result["chunks"]
 
     # Save user message
     user_msg_id = str(uuid.uuid4())
@@ -341,7 +417,7 @@ async def chat_endpoint(request: ChatRequest):
     # Generate answer
     t_gen_start = time.perf_counter()
     result = await rag_chat(
-        question=question,
+        question=chat_question,
         context_chunks=context_chunks,
         title=record.get("title", ""),
         url=record["url"],

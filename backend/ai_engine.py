@@ -84,16 +84,35 @@ def validate_retrieved_chunks(question: str, context_chunks: list[dict], title: 
     max_score = max(c.get("score", 0.0) for c in context_chunks)
     
     if max_score < 0.25:
-        # Check if the query contains any keywords from the domain or title
-        q_words = set(re.findall(r'\b\w+\b', question.lower()))
-        domain_words = set(re.findall(r'\b\w+\b', (title or url).lower()))
-        
-        # If there is overlap, it's about the site's domain but not indexed (Case B)
-        # Otherwise, completely unrelated (Case C)
-        if q_words.intersection(domain_words):
-            refusal_case = "Case B"
-        else:
-            refusal_case = "Case C"
+        # Fast LLM-based classification to distinguish between Case B (related but unindexed) and Case C (unrelated)
+        refusal_case = "Case C"
+        try:
+            val_model = get_validation_model()
+            prompt = (
+                "You are a strict RAG validation classifier.\n"
+                "Given a website's topic (represented by its URL and Title) and a User Question, "
+                "determine if the question is related to the website's general domain/content topic, "
+                "or if it is completely unrelated.\n\n"
+                f"Website Title: {title}\n"
+                f"Website URL: {url}\n"
+                f"User Question: {question}\n\n"
+                "Reply with exactly one word: 'RELATED' or 'UNRELATED' (no other text, no punctuation)."
+            )
+            response = val_model.generate_content(prompt)
+            classification = response.text.strip().upper()
+            if "RELATED" in classification:
+                refusal_case = "Case B"
+            else:
+                refusal_case = "Case C"
+            logger.info(f"Refusal classifier classified '{question}' on {title or url} as: {refusal_case} (LLM reply: '{classification}')")
+        except Exception as e:
+            logger.warning(f"Failed to run LLM refusal classifier: {e}. Falling back to keyword heuristics.")
+            q_words = set(re.findall(r'\b\w+\b', question.lower()))
+            domain_words = set(re.findall(r'\b\w+\b', (title or url).lower()))
+            if q_words.intersection(domain_words):
+                refusal_case = "Case B"
+            else:
+                refusal_case = "Case C"
             
         return {
             "chunk_relevance": [False] * len(context_chunks),
@@ -120,6 +139,7 @@ _REFUSAL_RESPONSES = {
     "Information not found in the indexed website content.",
     "I could not find pricing information in the indexed website content.",
     "The requested information may exist on the website, but the relevant page was not indexed during crawling.\n\nPlease increase crawl depth and analyze the website again.",
+    "The requested information may exist on the website, but the relevant page was not indexed. Try increasing the crawl depth and analyze again.",
     "This question is unrelated to the indexed website.",
 }
 
@@ -198,7 +218,7 @@ async def rag_chat(
             else:
                 refusal_msg = "Information not found in the indexed website content."
         elif refusal_case == "Case B":
-            refusal_msg = "The requested information may exist on the website, but the relevant page was not indexed during crawling.\n\nPlease increase crawl depth and analyze the website again."
+            refusal_msg = "The requested information may exist on the website, but the relevant page was not indexed. Try increasing the crawl depth and analyze again."
         else: # Case C
             refusal_msg = "This question is unrelated to the indexed website."
 

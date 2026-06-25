@@ -65,23 +65,86 @@ async def scrape_url(url: str) -> dict:
         # --- DOM Cleanup and Content Extraction ---
         clean_soup = BeautifulSoup(html, "lxml")
         
-        # Decompose unwanted tags
-        unwanted_tags = ["img", "script", "style", "nav", "footer", "header", "aside", "form"]
-        for tag in clean_soup.find_all(unwanted_tags):
-            tag.decompose()
+        # Decompose unwanted tags safely (copy list to prevent iteration mutation errors)
+        unwanted_tags = ["img", "script", "style", "nav", "footer", "header", "aside", "form", "noscript", "iframe"]
+        for tag in list(clean_soup.find_all(unwanted_tags)):
+            try:
+                tag.decompose()
+            except Exception:
+                pass
+
+        # Decompose boilerplate elements based on class/id containing keywords
+        boilerplate_keywords = [
+            "cookie-consent", "cookie-banner", "cookie-notice", "cookiebar",
+            "consent-banner", "privacy-banner", "gdpr",
+            "nav-menu", "navbar", "navigation-menu", "site-nav", "header-nav",
+            "footer-nav", "footer-menu", "footer-links",
+            "social-share", "share-buttons", "newsletter-signup",
+            "newsletter-form", "marketing-banner", "promo-banner",
+            "advertisement", "ads-container", "ad-banner"
+        ]
+        
+        to_decompose = []
+        for tag in list(clean_soup.find_all(True)):
+            if tag is None:
+                continue
+            try:
+                tag_id = (tag.get("id") or "").lower()
+                if any(kw in tag_id for kw in boilerplate_keywords):
+                    to_decompose.append(tag)
+                    continue
+                
+                tag_classes = tag.get("class") or []
+                if isinstance(tag_classes, list):
+                    tag_classes = " ".join(tag_classes).lower()
+                else:
+                    tag_classes = str(tag_classes).lower()
+                if any(kw in tag_classes for kw in boilerplate_keywords):
+                    to_decompose.append(tag)
+                    continue
+            except Exception:
+                pass
+                
+        for tag in to_decompose:
+            try:
+                tag.decompose()
+            except Exception:
+                pass
             
-        # Extract text only from specified tags
-        valid_tags = ["p", "h1", "h2", "h3", "h4", "li", "td", "th"]
+        # Extract text only from specified tags to preserve hierarchy
+        valid_tags = ["h1", "h2", "h3", "h4", "p", "li", "td", "th"]
         
         seen = set()
         clean_lines = []
         for tag in clean_soup.find_all(valid_tags):
+            name = tag.name
             line_strip = tag.get_text(separator=" ", strip=True)
-            # Skip strings under 30 characters
-            if len(line_strip) >= 30:
+            # Skip strings under 15 characters
+            if len(line_strip) >= 15:
+                # Filter common boilerplate phrases
+                line_lower = line_strip.lower()
+                if any(phrase in line_lower for phrase in [
+                    "cookie policy", "we use cookies", "agree to our use of cookies",
+                    "all rights reserved", "terms of service", "privacy policy",
+                    "subscribe to our newsletter", "sign up for our", "skip to main content"
+                ]):
+                    continue
+                    
                 if line_strip not in seen:
                     seen.add(line_strip)
-                    clean_lines.append(line_strip)
+                    # Format headings to preserve hierarchy in section splits
+                    if name == "h1":
+                        clean_lines.append(f"# {line_strip}")
+                    elif name == "h2":
+                        clean_lines.append(f"## {line_strip}")
+                    elif name == "h3":
+                        clean_lines.append(f"### {line_strip}")
+                    elif name == "h4":
+                        clean_lines.append(f"#### {line_strip}")
+                    elif name == "li":
+                        clean_lines.append(f"* {line_strip}")
+                    else:
+                        clean_lines.append(line_strip)
                     
         content = "\n\n".join(clean_lines)
 
@@ -292,10 +355,22 @@ Contact our hiring team at careers@{domain} or check our developer portal.
     return pages
 
 
+def classify_website_type(url: str) -> str:
+    """Classify site type into: 'docs', 'e-commerce', 'company', or 'general'"""
+    u_lower = url.lower()
+    if any(kw in u_lower for kw in ["docs", "doc", "learn", "guide", "tutorial", "wiki", "api", "reference", "tiangolo.com", "react.dev", "python.org", "github.com", "huggingface.co", "geeksforgeeks.org"]):
+        return "docs"
+    if any(kw in u_lower for kw in ["shop", "store", "cart", "flipkart", "amazon", "ebay", "walmart", "target", "e-commerce"]):
+        return "e-commerce"
+    if any(kw in u_lower for kw in ["about", "product", "features", "pricing", "pricing", "service"]):
+        return "company"
+    return "general"
+
+
 async def crawl_website(start_url: str, max_pages: int = 10) -> list[dict]:
     """
     Recursively crawl internal pages starting from start_url in parallel batches.
-    Prioritizes pages that contain keywords like 'about', 'product', 'docs', etc.
+    Prioritizes pages that contain keywords based on detected site type (docs, company, e-commerce).
     
     Returns:
         List of dicts, each representing a scraped page:
@@ -303,8 +378,9 @@ async def crawl_website(start_url: str, max_pages: int = 10) -> list[dict]:
     """
     parsed_start = urlparse(start_url)
     start_domain = parsed_start.netloc
+    site_type = classify_website_type(start_url)
     
-    logger.info(f"Crawling start URL homepage: {start_url}")
+    logger.info(f"Crawling start URL homepage: {start_url} (Site type: {site_type}, Max pages: {max_pages})")
     homepage_res = None
     try:
         homepage_res = await scrape_url(start_url)
@@ -314,6 +390,7 @@ async def crawl_website(start_url: str, max_pages: int = 10) -> list[dict]:
     if not homepage_res or not homepage_res.get("success"):
         logger.warning(f"Could not scrape start URL homepage successfully.")
         return []
+        
     pages = []
     seen_urls = set()
     seen_hashes = set()
@@ -342,7 +419,9 @@ async def crawl_website(start_url: str, max_pages: int = 10) -> list[dict]:
         ignore_kws = [
             "login", "signin", "signup", "register", "logout",
             "account", "profile", "privacy", "terms", "tos", "policy",
-            "careers", "jobs", "job", "career"
+            "careers", "jobs", "job", "career", "cookie", "cookies",
+            "terms-of-service", "privacy-policy", "sign-in", "sign-up",
+            "login-page", "checkout", "cart", "terms-and-conditions"
         ]
         if any(kw in path or kw in query for kw in ignore_kws):
             return True
@@ -362,40 +441,37 @@ async def crawl_website(start_url: str, max_pages: int = 10) -> list[dict]:
             
         return False
         
-    def get_priority(url_str: str) -> int:
+    def get_priority(url_str: str, s_type: str) -> int:
         parsed = urlparse(url_str)
         path = parsed.path.lower()
         query = parsed.query.lower()
         
-        # Priority order:
-        # 1. docs
-        # 2. api
-        # 3. about
-        # 4. product
-        # 5. features
-        # 6. pricing
-        # 7. faq
-        # 8. guides
+        if s_type == "docs":
+            doc_kws = ["learn", "docs", "guide", "tutorial", "reference", "api", "hooks", "state", "props", "components", "context"]
+            if any(x in path or x in query for x in doc_kws):
+                return 80
+        elif s_type == "company":
+            company_kws = ["about", "products", "services", "pricing", "features", "blog", "faq", "contact"]
+            if any(x in path or x in query for x in company_kws):
+                return 80
+        elif s_type == "e-commerce":
+            ecom_kws = ["category", "product", "help", "support"]
+            if any(x in path or x in query for x in ecom_kws):
+                return 80
+                
+        # Default priority fallback (historical)
         if any(x in path or x in query for x in ["docs", "doc", "readme"]):
-            return 80
-        if any(x in path or x in query for x in ["api", "apis"]):
-            return 70
-        if "about" in path or "about" in query:
-            return 60
-        if any(x in path or x in query for x in ["product", "products"]):
             return 50
-        if any(x in path or x in query for x in ["features", "feature"]):
+        if any(x in path or x in query for x in ["api", "apis"]):
+            return 45
+        if "about" in path or "about" in query:
             return 40
-        if any(x in path or x in query for x in ["pricing", "prices"]):
-            return 30
-        if any(x in path or x in query for x in ["faq", "faqs"]):
-            return 20
-        if any(x in path or x in query for x in ["guides", "guide", "tutorial", "learn"]):
-            return 10
         return 0
 
-    # Extract and filter candidate links
-    candidates = []
+    # We maintain candidates as a dict: norm_url -> (full_url, priority)
+    candidates = {}
+    
+    # Extract links from homepage to seed candidates
     for link in homepage_res.get("links", []):
         link_parsed = urlparse(link)
         is_internal = (link_parsed.netloc == start_domain) or (not link_parsed.netloc and link.startswith("/"))
@@ -411,23 +487,26 @@ async def crawl_website(start_url: str, max_pages: int = 10) -> list[dict]:
         if is_ignored(full_link):
             continue
             
-        priority = get_priority(full_link)
-        candidates.append((full_link, norm_link, priority))
+        priority = get_priority(full_link, site_type)
+        candidates[norm_link] = (full_link, priority)
         
-    # Deduplicate candidate URLs
-    unique_candidates = {}
-    for fl, nl, pri in candidates:
-        if nl not in unique_candidates or pri > unique_candidates[nl][2]:
-            unique_candidates[nl] = (fl, nl, pri)
+    # BFS multi-level parallelized crawling loop
+    while len(pages) < max_pages and candidates:
+        # Sort candidates by priority descending
+        sorted_candidates = sorted(candidates.items(), key=lambda x: x[1][1], reverse=True)
+        
+        # Take a batch of up to min(10, max_pages - len(pages)) candidates
+        batch_size = min(10, max_pages - len(pages))
+        batch = sorted_candidates[:batch_size]
+        
+        # Remove batch from candidates and mark as seen
+        for norm_link, _ in batch:
+            del candidates[norm_link]
+            seen_urls.add(norm_link)
             
-    sorted_candidates = sorted(unique_candidates.values(), key=lambda x: x[2], reverse=True)
-    
-    # Limit number of subpages to fetch
-    to_crawl = sorted_candidates[:max_pages - 1]
-    
-    if to_crawl:
-        logger.info(f"Concurrently scraping {len(to_crawl)} prioritized internal subpages.")
-        tasks = [scrape_url(x[0]) for x in to_crawl]
+        # Concurrently scrape the batch
+        logger.info(f"Concurrently scraping {len(batch)} prioritized internal pages.")
+        tasks = [scrape_url(info[0]) for norm_link, info in batch]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         for res in results:
@@ -448,6 +527,22 @@ async def crawl_website(start_url: str, max_pages: int = 10) -> list[dict]:
                 "content_hash": c_hash
             })
             
+            # Extract links from the newly crawled page to discover deeper pages
+            if len(pages) < max_pages:
+                for link in res.get("links", []):
+                    link_parsed = urlparse(link)
+                    is_internal = (link_parsed.netloc == start_domain) or (not link_parsed.netloc and link.startswith("/"))
+                    if not is_internal:
+                        continue
+                    full_link = link if link_parsed.netloc else urljoin(res["url"], link)
+                    norm_link = full_link.split("#")[0].rstrip("/")
+                    
+                    if norm_link in seen_urls or norm_link in candidates or is_ignored(full_link):
+                        continue
+                        
+                    priority = get_priority(full_link, site_type)
+                    candidates[norm_link] = (full_link, priority)
+                    
     return pages
 
 
