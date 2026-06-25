@@ -120,9 +120,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: #000000;
-  box-shadow: 0 0 15px rgba(220, 38, 38, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.05); /* blends logo black with app background */
+  background-color: transparent; /* merges logo background with app */
+  border: none;
+  box-shadow: none;
   flex-shrink: 0;
   transition: transform 0.2s ease-in-out;
 }
@@ -584,10 +584,10 @@ select:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: #000000;
-  box-shadow: 0 8px 25px rgba(220, 38, 38, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  animation: pulse-glow 2.5s infinite ease-in-out;
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  animation: pulse-glow-filter 2.5s infinite ease-in-out;
 }
 
 .empty-logo-center img {
@@ -595,13 +595,12 @@ select:focus {
   height: 100%;
   object-fit: cover;
   border-radius: 50%;
-  filter: brightness(1.1) contrast(1.1);
   display: block;
 }
 
-@keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 8px 25px rgba(220, 38, 38, 0.35); }
-  50% { box-shadow: 0 8px 35px rgba(220, 38, 38, 0.6); }
+@keyframes pulse-glow-filter {
+  0%, 100% { filter: brightness(1.15) contrast(1.15) drop-shadow(0 0 6px rgba(220, 38, 38, 0.5)); }
+  50% { filter: brightness(1.25) contrast(1.2) drop-shadow(0 0 14px rgba(220, 38, 38, 0.85)); }
 }
 
 .empty-state h2 {
@@ -672,11 +671,11 @@ select:focus {
 }
 
 .message-row.assistant .avatar {
-  background-color: #000000;
-  border: 1px solid var(--border);
+  background-color: transparent;
+  border: none;
   order: 1;
   overflow: hidden;
-  box-shadow: 0 0 8px rgba(220, 38, 38, 0.15);
+  box-shadow: none;
 }
 
 .message-content {
