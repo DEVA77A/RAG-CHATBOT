@@ -34,6 +34,10 @@ function App() {
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
 
+  // Sidebar open/close states
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
+
   // Scroll to bottom when messages update
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -293,14 +297,14 @@ function App() {
   return (
     <div className="app-container">
       {/* ─── LEFT SIDEBAR ─── */}
-      <aside className="sidebar">
+      <aside className={`sidebar ${leftSidebarOpen ? 'open' : 'collapsed'}`}>
         <div className="sidebar-header">
           <div className="app-logo">
             <div className="logo-circle">
               <img src="/logo.jpg" alt="RAGX Logo" />
             </div>
             <div className="logo-info">
-              <h2>RAG X</h2>
+              <h2>RAG <span className="logo-x">X</span></h2>
               <span className="logo-version">Enterprise Alpha</span>
             </div>
           </div>
@@ -378,22 +382,7 @@ function App() {
             )}
           </div>
 
-          {status === 'ready' && kbStats && (
-            <div className="sources-list-container">
-              <h3>Indexed Sources</h3>
-              <ul className="sources-list">
-                {indexedPages.map((page, idx) => (
-                  <li key={idx} title={page.url}>
-                    <div className="source-title">{page.title || page.url.split('/').pop() || page.url}</div>
-                    <div className="source-meta">
-                      <span className="badge-small">{page.chunk_count} chunks</span>
-                      <a href={page.url} target="_blank" rel="noreferrer" className="source-link">View</a>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {/* Indexed Sources moved to Right Sidebar */}
 
           {historyList.length > 0 && (
             <div className="history-section mt-4">
@@ -414,7 +403,38 @@ function App() {
       {/* ─── MAIN CHAT PANEL ─── */}
       <main className="main-panel">
         <div className="top-nav flex-between">
-          <h3>{domain ? `Chatting with ${domain}` : 'Waiting for context...'}</h3>
+          <div className="top-nav-left">
+            <button 
+              className="sidebar-toggle-btn left-toggle" 
+              onClick={() => setLeftSidebarOpen(!leftSidebarOpen)}
+              title={leftSidebarOpen ? "Collapse Left Sidebar" : "Expand Left Sidebar"}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                {leftSidebarOpen ? (
+                  <polyline points="15 18 9 12 15 6"></polyline>
+                ) : (
+                  <polyline points="9 18 15 12 9 6"></polyline>
+                )}
+              </svg>
+            </button>
+            <h3>{domain ? `Chatting with ${domain}` : 'Waiting for context...'}</h3>
+          </div>
+          
+          <div className="top-nav-right">
+            <button 
+              className="sidebar-toggle-btn right-toggle" 
+              onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
+              title={rightSidebarOpen ? "Collapse Sources Panel" : "Expand Sources Panel"}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                {rightSidebarOpen ? (
+                  <polyline points="9 18 15 12 9 6"></polyline>
+                ) : (
+                  <polyline points="15 18 9 12 15 6"></polyline>
+                )}
+              </svg>
+            </button>
+          </div>
         </div>
 
 
@@ -516,6 +536,34 @@ function App() {
           </form>
         </div>
       </main>
+
+      {/* ─── RIGHT SIDEBAR (INDEXED SOURCES) ─── */}
+      <aside className={`right-sidebar ${rightSidebarOpen ? 'open' : 'collapsed'}`}>
+        <div className="right-sidebar-header">
+          <h3>Indexed Sources</h3>
+          {indexedPages.length > 0 && <span className="badge-small-red">{indexedPages.length} files</span>}
+        </div>
+        <div className="right-sidebar-content">
+          {indexedPages.length > 0 ? (
+            <ul className="sources-list">
+              {indexedPages.map((page, idx) => (
+                <li key={idx} title={page.url}>
+                  <div className="source-title">{page.title || page.url.split('/').pop() || page.url}</div>
+                  <div className="source-meta">
+                    <span className="badge-small">{page.chunk_count} chunks</span>
+                    <a href={page.url} target="_blank" rel="noreferrer" className="source-link">View</a>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="empty-sources-placeholder">
+              <div className="placeholder-icon">📂</div>
+              <p>{status === 'crawling' ? 'Crawling pages...' : 'No indexed sources. Crawl a website in the sidebar to populate.'}</p>
+            </div>
+          )}
+        </div>
+      </aside>
 
     </div>
   );
