@@ -1,6 +1,7 @@
 import requests
 import time
 import json
+import sys
 
 BASE_URL = "http://localhost:8001"
 
@@ -38,6 +39,7 @@ TEST_CASES = [
 ]
 
 def run_validation():
+    sys.stdout.reconfigure(encoding='utf-8')
     print("Starting Validation...")
     for case in TEST_CASES:
         url = case["url"]

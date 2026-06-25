@@ -10,10 +10,13 @@ Strict grounding with citation validation.
 
 import logging
 import os
-from dotenv import load_dotenv
-load_dotenv()
+import json
 import re
 import warnings
+import hashlib
+import uuid
+from dotenv import load_dotenv
+load_dotenv()
 
 # Suppress the google.generativeai deprecation warning
 warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
@@ -29,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 _chat_models = {}
 
-def get_chat_model(model_name="gemini-1.5-flash") -> genai.GenerativeModel:
+def get_chat_model(model_name="gemini-3.5-flash") -> genai.GenerativeModel:
     """Lazy-initialize the strict RAG chat model."""
     if model_name not in _chat_models:
         api_key = os.getenv("GEMINI_API_KEY")
@@ -48,6 +51,65 @@ def get_chat_model(model_name="gemini-1.5-flash") -> genai.GenerativeModel:
     return _chat_models[model_name]
 
 
+_validation_model = None
+
+def get_validation_model() -> genai.GenerativeModel:
+    """Lazy-initialize the validation model for chunk filtering."""
+    global _validation_model
+    if _validation_model is None:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY not set.")
+        genai.configure(api_key=api_key)
+        _validation_model = genai.GenerativeModel(
+            model_name="gemini-3.5-flash",
+        )
+    return _validation_model
+
+
+def validate_retrieved_chunks(question: str, context_chunks: list[dict], title: str, url: str) -> dict:
+    """
+    Validate each chunk for relevance and classify refusals.
+    Returns a dict with: chunk_relevance (list of bool), confidence (High/Medium/Low), refusal_case (Case A/B/C or None)
+    """
+    if not context_chunks:
+        return {
+            "chunk_relevance": [],
+            "confidence": "Low",
+            "refusal_case": "Case A"
+        }
+        
+    # Heuristic: Check similarity score
+    # Cosine similarity in FAISS is normalized. Under 0.25 similarity indicates very weak retrieval match.
+    max_score = max(c.get("score", 0.0) for c in context_chunks)
+    
+    if max_score < 0.25:
+        # Check if the query contains any keywords from the domain or title
+        q_words = set(re.findall(r'\b\w+\b', question.lower()))
+        domain_words = set(re.findall(r'\b\w+\b', (title or url).lower()))
+        
+        # If there is overlap, it's about the site's domain but not indexed (Case B)
+        # Otherwise, completely unrelated (Case C)
+        if q_words.intersection(domain_words):
+            refusal_case = "Case B"
+        else:
+            refusal_case = "Case C"
+            
+        return {
+            "chunk_relevance": [False] * len(context_chunks),
+            "confidence": "Low",
+            "refusal_case": refusal_case
+        }
+        
+    # For higher similarity scores, let the main LLM call perform semantic validation.
+    # By default, we keep all retrieved chunks and let the LLM filter or refuse based on its system instructions.
+    return {
+        "chunk_relevance": [True] * len(context_chunks),
+        "confidence": "High",
+        "refusal_case": None
+    }
+
+
 # ──────────────────────────────────────────────
 # Citation Validation (Deterministic — no LLM call)
 # ──────────────────────────────────────────────
@@ -55,6 +117,10 @@ def get_chat_model(model_name="gemini-1.5-flash") -> genai.GenerativeModel:
 _REFUSAL_RESPONSES = {
     "Information not found in analyzed website content.",
     "This question is unrelated to the analyzed website.",
+    "Information not found in the indexed website content.",
+    "I could not find pricing information in the indexed website content.",
+    "The requested information may exist on the website, but the relevant page was not indexed during crawling.\n\nPlease increase crawl depth and analyze the website again.",
+    "This question is unrelated to the indexed website.",
 }
 
 
@@ -103,38 +169,73 @@ async def rag_chat(
     Returns dict with:
         answer, sources, chunk_count, avg_similarity, debug
     """
-    k = len(context_chunks)
-    avg_sim = sum(c.get("score", 0.0) for c in context_chunks) / k if k > 0 else 0.0
+    orig_k = len(context_chunks)
+    orig_avg_sim = sum(c.get("score", 0.0) for c in context_chunks) / orig_k if orig_k > 0 else 0.0
 
     if not context_chunks:
         return _build_refusal_response(
-            "Information not found in analyzed website content.",
-            context_chunks, url, avg_sim,
+            "Information not found in the indexed website content.",
+            context_chunks, url, orig_avg_sim,
             "No context chunks provided."
         )
+
+    # ── Retrieval Validation ──
+    val_res = validate_retrieved_chunks(question, context_chunks, title, url)
+    relevance = val_res.get("chunk_relevance", [True] * len(context_chunks))
+    refusal_case = val_res.get("refusal_case")
+    confidence = val_res.get("confidence", "Medium")
+
+    filtered_chunks = [c for c, r in zip(context_chunks, relevance) if r]
+    
+    # Check if we should refuse immediately
+    if not filtered_chunks or refusal_case or confidence == "Low":
+        if not refusal_case:
+            refusal_case = "Case A"
+            
+        if refusal_case == "Case A":
+            if any(kw in question.lower() for kw in ["price", "pricing", "cost"]):
+                refusal_msg = "I could not find pricing information in the indexed website content."
+            else:
+                refusal_msg = "Information not found in the indexed website content."
+        elif refusal_case == "Case B":
+            refusal_msg = "The requested information may exist on the website, but the relevant page was not indexed during crawling.\n\nPlease increase crawl depth and analyze the website again."
+        else: # Case C
+            refusal_msg = "This question is unrelated to the indexed website."
+
+        return _build_refusal_response(
+            refusal_msg,
+            context_chunks, url, orig_avg_sim,
+            f"Validation Refusal: {refusal_case}"
+        )
+
+    k = len(filtered_chunks)
+    avg_sim = sum(c.get("score", 0.0) for c in filtered_chunks) / k if k > 0 else 0.0
 
     # Build prompt
     prompt = build_chat_prompt(
         question=question,
-        context_chunks=context_chunks,
+        context_chunks=filtered_chunks,
         title=title,
         url=url,
         chat_history=chat_history,
     )
 
-    logger.info(f"RAG chat: '{question[:80]}' with {k} chunks.")
+    logger.info(f"RAG chat: '{question[:80]}' with {k} filtered chunks (originally {orig_k}).")
 
     # Multi-Provider LLM Fallback Routing
-    import os
-    import hashlib
-    import json
-    import uuid
     from database import find_in_semantic_cache, save_to_semantic_cache
     
+    import numpy as np
     question_embedding = kwargs.get("question_embedding", [])
+    if isinstance(question_embedding, np.ndarray):
+        question_embedding = question_embedding.flatten().tolist()
+    elif question_embedding and hasattr(question_embedding, "tolist"):
+        question_embedding = question_embedding.tolist()
+    elif question_embedding:
+        question_embedding = list(question_embedding)
     
     url_hash = hashlib.md5(url.encode()).hexdigest()
-    context_text_for_hash = "".join([c["content"] for c in context_chunks])
+    context_text_for_hash = "".join([c["content"] for c in filtered_chunks])
     context_hash = hashlib.md5(context_text_for_hash.encode()).hexdigest()
     
     debug_info = {
@@ -150,7 +251,7 @@ async def rag_chat(
     # Provider 1: Gemini Waterfall
     if not answer:
         import google.api_core.exceptions
-        gemini_models = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-1.0-pro"]
+        gemini_models = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
         for m_name in gemini_models:
             try:
                 model = get_chat_model(m_name)
@@ -222,15 +323,14 @@ async def rag_chat(
     # Provider 4: Context Summarizer
     if not answer:
         try:
-            import re
             q_words = set(word for word in re.findall(r'\b\w+\b', question.lower()) if len(word) > 3)
             valid = False
-            for c in context_chunks:
+            for c in filtered_chunks:
                 if c.get("score", 0.0) >= 0.45:
                     valid = True
                     break
                 meta = c.get("metadata", {})
-                title_words = set(re.findall(r'\b\w+\b', meta.get("page_title", "").lower()))
+                title_words = set(re.findall(r'\b\w+\b', meta.get("source_title", "").lower()))
                 heading_words = set(re.findall(r'\b\w+\b', meta.get("heading", "").lower()))
                 if q_words.intersection(title_words) or q_words.intersection(heading_words):
                     valid = True
@@ -241,12 +341,15 @@ async def rag_chat(
                 debug_info["LLM Provider"] = "Local Context Summary (Rejected)"
                 debug_info["Response Source"] = "Local Fallback"
             else:
-                chunks_to_use = context_chunks[:2]
+                chunks_to_use = filtered_chunks[:2]
                 text_parts = []
                 for c in chunks_to_use:
                     meta = c.get("metadata", {})
-                    title = meta.get("source_title", "Unknown Title")
-                    url = meta.get("source_url", "")
+                    source_title = meta.get("source_title") or meta.get("page_title") or title or "Indexed Content"
+                    if not source_title.strip() or source_title.strip() == "Unknown Title":
+                        source_title = title or "Indexed Content"
+                        
+                    source_url = meta.get("source_url") or meta.get("url") or url
                     chunk_id = meta.get("chunk_id", 1)
                     
                     text = c['content']
@@ -260,7 +363,7 @@ async def rag_chat(
                         if len(clean_text) > 250:
                             clean_text = clean_text[:247] + "..."
                         
-                        part = f"{clean_text}\n\nURL: {url}\n\n[Source {chunk_id}]"
+                        part = f"{clean_text}\n\nURL: {source_url}\n\n[Source {chunk_id}]"
                         text_parts.append(part)
                 
                 content_text = "\n\n---\n\n".join(text_parts)
@@ -279,7 +382,7 @@ async def rag_chat(
     # Save Cloud Response to Semantic Cache
     if answer and debug_info["Response Source"] == "Cloud" and question_embedding is not None and len(question_embedding) > 0:
         try:
-            chunk_ids = [c.get("metadata", {}).get("chunk_id", 0) for c in context_chunks]
+            chunk_ids = [c.get("metadata", {}).get("chunk_id", 0) for c in filtered_chunks]
             await save_to_semantic_cache(
                 str(uuid.uuid4()), url, url_hash, question, question_embedding, chunk_ids, context_hash, "default", answer
             )
@@ -290,16 +393,19 @@ async def rag_chat(
     sources = []
     cited_ids = set(int(i) for i in re.findall(r"\[Source (\d+)\]", answer))
     # If no citations were generated by LLM, fallback to citing the top chunk to prevent frontend crash
-    if not cited_ids and context_chunks:
+    if not cited_ids and filtered_chunks:
         cited_ids = {1}
         
-    for i, chunk in enumerate(context_chunks, 1):
+    for i, chunk in enumerate(filtered_chunks, 1):
         meta = chunk.get("metadata", {})
         if i in cited_ids:
-            source_url = meta.get("source_url", url)
-            source_title = meta.get("source_title", "Unknown Title")
+            source_url = meta.get("source_url") or meta.get("url") or url
+            source_title = meta.get("source_title") or meta.get("page_title") or title or "Indexed Content"
+            if not source_title.strip() or source_title.strip() == "Unknown Title":
+                source_title = title or "Indexed Content"
+                
             sources.append({
-                "chunk_id": meta.get("chunk_id", i - 1),
+                "chunk_id": meta.get("chunk_id", i),
                 "source_url": source_url,
                 "source_title": source_title,
                 "content": chunk["content"][:200],
@@ -311,6 +417,38 @@ async def rag_chat(
             target_str = f"[Source {i}]"
             md_link = f"[Source: {source_title}]({source_url})"
             answer = answer.replace(target_str, md_link)
+
+    # Build and append Source Cards to the end of the answer
+    source_cards = []
+    for s in sources:
+        score = s.get("score", 0.0)
+        if score >= 0.7:
+            conf = "High"
+        elif score >= 0.45:
+            conf = "Medium"
+        else:
+            conf = "Low"
+            
+        section_heading = "Main Section"
+        for fc in filtered_chunks:
+            if fc.get("metadata", {}).get("chunk_id", -1) == s["chunk_id"]:
+                section_heading = fc.get("metadata", {}).get("heading") or "Main Section"
+                break
+        if not section_heading.strip():
+            section_heading = "Main Section"
+
+        card = (
+            f"📄 **Page Title**: {s['source_title']}\n"
+            f"📂 **Section**: {section_heading}\n"
+            f"🌐 **Original URL**: {s['source_url']}\n"
+            f"🎯 **Confidence**: {conf}\n"
+            f"📊 **Similarity**: {score:.2f}\n"
+            f"🧩 **Chunk IDs Used**: {s['chunk_id']}"
+        )
+        source_cards.append(card)
+
+    if source_cards:
+        answer += "\n\n---\n\n### Source Cards\n\n" + "\n\n---\n\n".join(source_cards)
 
     # Token count
     try:
@@ -327,7 +465,7 @@ async def rag_chat(
                 "chunk_text": c["content"],
                 "score": c.get("score", 0.0),
             }
-            for i, c in enumerate(context_chunks)
+            for i, c in enumerate(filtered_chunks)
         ],
         "final_prompt": prompt,
         "context_length": len(prompt),
