@@ -2,9 +2,8 @@
 WebIntel AI — Website Scraper
 
 Strategy:
-  1. Trafilatura (primary) — excellent at extracting main article content
-  2. BeautifulSoup (fallback) — raw HTML parsing for metadata and links
-  3. Combined output: title, description, clean text content, links
+  1. BeautifulSoup — structured content extraction
+  2. Combined output: title, description, clean text content, links
 """
 
 import asyncio
@@ -13,7 +12,6 @@ import logging
 from urllib.parse import urlparse, urljoin
 
 import httpx
-import trafilatura
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
@@ -64,20 +62,30 @@ async def scrape_url(url: str) -> dict:
         result["description"] = _extract_description(soup)
         result["links"] = _extract_links(soup, url)
 
-        # Extract main content with Trafilatura
-        content = trafilatura.extract(
-            html,
-            include_links=True,
-            include_tables=True,
-            include_comments=False,
-            favor_recall=True,
-        )
+        # --- DOM Cleanup and Content Extraction ---
+        clean_soup = BeautifulSoup(html, "lxml")
+        
+        # Decompose unwanted tags
+        unwanted_tags = ["img", "script", "style", "nav", "footer", "header", "aside", "form"]
+        for tag in clean_soup.find_all(unwanted_tags):
+            tag.decompose()
+            
+        # Extract text only from specified tags
+        valid_tags = ["p", "h1", "h2", "h3", "h4", "li", "td", "th"]
+        
+        seen = set()
+        clean_lines = []
+        for tag in clean_soup.find_all(valid_tags):
+            line_strip = tag.get_text(separator=" ", strip=True)
+            # Skip strings under 30 characters
+            if len(line_strip) >= 30:
+                if line_strip not in seen:
+                    seen.add(line_strip)
+                    clean_lines.append(line_strip)
+                    
+        content = "\n\n".join(clean_lines)
 
-        # Fallback: use BeautifulSoup text if Trafilatura returns nothing
-        if not content or len(content.strip()) < 100:
-            content = _fallback_extract(soup)
-
-        if not content or len(content.strip()) < 50:
+        if not content:
             result["error"] = "Could not extract meaningful content from this website."
             return result
 

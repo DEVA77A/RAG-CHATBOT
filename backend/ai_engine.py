@@ -10,41 +10,42 @@ Strict grounding with citation validation.
 
 import logging
 import os
-import re
 from dotenv import load_dotenv
+load_dotenv()
+import re
+import warnings
+
+# Suppress the google.generativeai deprecation warning
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
 import google.generativeai as genai
 
 from prompts import CHAT_SYSTEM_INSTRUCTION, build_chat_prompt
 
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────
 # Gemini Configuration
 # ──────────────────────────────────────────────
 
-_chat_model = None
+_chat_models = {}
 
-
-def get_chat_model() -> genai.GenerativeModel:
+def get_chat_model(model_name="gemini-1.5-flash") -> genai.GenerativeModel:
     """Lazy-initialize the strict RAG chat model."""
-    global _chat_model
-    if _chat_model is None:
+    if model_name not in _chat_models:
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY not set.")
         genai.configure(api_key=api_key)
 
-        _chat_model = genai.GenerativeModel(
-            model_name="gemini-3.5-flash",
+        _chat_models[model_name] = genai.GenerativeModel(
+            model_name=model_name,
             system_instruction=CHAT_SYSTEM_INSTRUCTION,
             generation_config=genai.GenerationConfig(
                 temperature=0.0,
                 max_output_tokens=2048,
             ),
         )
-        logger.info("Gemini strict RAG chat model initialized.")
-    return _chat_model
+    return _chat_models[model_name]
 
 
 # ──────────────────────────────────────────────
@@ -123,49 +124,167 @@ async def rag_chat(
 
     logger.info(f"RAG chat: '{question[:80]}' with {k} chunks.")
 
-    # Generate answer
-    model = get_chat_model()
-    try:
-        response = model.generate_content(prompt)
-        answer = response.text.strip()
-    except Exception as e:
-        logger.error(f"Gemini error: {e}")
-        # Fallback: bypass quota limits by formatting chunks directly
-        is_detailed = "detail" in question.lower()
-        
-        if is_detailed:
-            text_parts = []
-            for c in context_chunks:
-                text = c['content']
-                if "Content: " in text:
-                    text = text.split("Content: ", 1)[-1]
-                text_parts.append(text.strip())
-            content_text = "\n\n".join(text_parts)
-        else:
-            top = context_chunks[0]
-            content_text = top['content']
-            if "Content: " in content_text:
-                content_text = content_text.split("Content: ", 1)[-1]
-            content_text = f"{content_text[:350].strip()}..."
+    # Multi-Provider LLM Fallback Routing
+    import os
+    import hashlib
+    import json
+    import uuid
+    from database import find_in_semantic_cache, save_to_semantic_cache
+    
+    question_embedding = kwargs.get("question_embedding", [])
+    
+    url_hash = hashlib.md5(url.encode()).hexdigest()
+    context_text_for_hash = "".join([c["content"] for c in context_chunks])
+    context_hash = hashlib.md5(context_text_for_hash.encode()).hexdigest()
+    
+    debug_info = {
+        "Retrieval Provider": "FAISS",
+        "LLM Provider": "None",
+        "Response Source": "None",
+        "Cache Hit": False,
+        "Fallback Activated": False
+    }
 
-        top = context_chunks[0]
-        page_title = top.get("metadata", {}).get("page_title", "Unknown Title")
-        source_url = top.get("metadata", {}).get("url", url)
-        score = top.get("score", 0.0)
-        chunk_id = top.get("metadata", {}).get("chunk_id", 1)
-        heading = top.get("metadata", {}).get("heading", "Main")
-        
-        source_card = (
-            f"\n\n──────────────────────────\n"
-            f"📄 Source\n"
-            f"Page: {page_title}\n"
-            f"Section: {heading}\n"
-            f"Original URL: {source_url}\n"
-            f"Similarity: {score:.2f}\n"
-            f"Chunk ID: {chunk_id}\n"
-            f"────────────────────────── [Source 1]"
-        )
-        answer = f"{content_text}{source_card}"
+    answer = None
+    
+    # Provider 1: Gemini Waterfall
+    if not answer:
+        import google.api_core.exceptions
+        gemini_models = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-1.0-pro"]
+        for m_name in gemini_models:
+            try:
+                model = get_chat_model(m_name)
+                response = model.generate_content(prompt)
+                answer = response.text.strip()
+                debug_info["LLM Provider"] = f"Gemini ({m_name})"
+                debug_info["Response Source"] = "Cloud"
+                break
+            except google.api_core.exceptions.ResourceExhausted as e:
+                logger.warning(f"Gemini Rate Limit on {m_name}, falling back to next model.")
+                continue
+            except Exception as e:
+                logger.warning(f"Gemini error on {m_name}: {e}")
+                continue
+        if not answer:
+            debug_info["Fallback Activated"] = True
+
+    # Provider 2: Claude Haiku
+    if not answer:
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        if anthropic_key:
+            try:
+                import anthropic
+                from anthropic import RateLimitError
+                client = anthropic.Anthropic(api_key=anthropic_key)
+                message = client.messages.create(
+                    model="claude-3-5-haiku-20241022",
+                    max_tokens=1000,
+                    system="You are a strict RAG assistant.",
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                answer = message.content[0].text.strip()
+                debug_info["LLM Provider"] = "Claude Haiku"
+                debug_info["Response Source"] = "Cloud"
+            except RateLimitError as e:
+                logger.error(f"Claude Rate Limit error: {e}")
+            except Exception as e:
+                logger.error(f"Claude error: {e}")
+        else:
+            logger.warning("No Anthropic API Key found, skipping Claude fallback.")
+
+    # Provider 3: Semantic Cache
+    if not answer and question_embedding is not None and len(question_embedding) > 0:
+        try:
+            def cos_sim(a, b):
+                dot = sum(x*y for x, y in zip(a, b))
+                norm_a = sum(x*x for x in a) ** 0.5
+                norm_b = sum(x*x for x in b) ** 0.5
+                return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
+
+            cached_rows = await find_in_semantic_cache(url_hash, context_hash, "default")
+            best_match = None
+            best_score = -1
+            for row in cached_rows:
+                cached_emb = json.loads(row["question_embedding"])
+                score = cos_sim(question_embedding, cached_emb)
+                if score > 0.95 and score > best_score:
+                    best_score = score
+                    best_match = row
+                    
+            if best_match:
+                answer = best_match["answer"]
+                debug_info["LLM Provider"] = "Semantic Cache"
+                debug_info["Response Source"] = "Cache"
+                debug_info["Cache Hit"] = True
+        except Exception as e:
+            logger.error(f"Semantic Cache error: {e}")
+
+    # Provider 4: Context Summarizer
+    if not answer:
+        try:
+            import re
+            q_words = set(word for word in re.findall(r'\b\w+\b', question.lower()) if len(word) > 3)
+            valid = False
+            for c in context_chunks:
+                if c.get("score", 0.0) >= 0.45:
+                    valid = True
+                    break
+                meta = c.get("metadata", {})
+                title_words = set(re.findall(r'\b\w+\b', meta.get("page_title", "").lower()))
+                heading_words = set(re.findall(r'\b\w+\b', meta.get("heading", "").lower()))
+                if q_words.intersection(title_words) or q_words.intersection(heading_words):
+                    valid = True
+                    break
+
+            if not valid:
+                answer = "The requested information could not be found in the indexed website content."
+                debug_info["LLM Provider"] = "Local Context Summary (Rejected)"
+                debug_info["Response Source"] = "Local Fallback"
+            else:
+                chunks_to_use = context_chunks[:2]
+                text_parts = []
+                for c in chunks_to_use:
+                    meta = c.get("metadata", {})
+                    title = meta.get("source_title", "Unknown Title")
+                    url = meta.get("source_url", "")
+                    chunk_id = meta.get("chunk_id", 1)
+                    
+                    text = c['content']
+                    if "[CONTENT]" in text:
+                        text = text.split("[CONTENT]")[-1]
+                    elif "Content: " in text:
+                        text = text.split("Content: ", 1)[-1]
+                        
+                    clean_text = text.strip()
+                    if clean_text:
+                        if len(clean_text) > 250:
+                            clean_text = clean_text[:247] + "..."
+                        
+                        part = f"{clean_text}\n\nURL: {url}\n\n[Source {chunk_id}]"
+                        text_parts.append(part)
+                
+                content_text = "\n\n---\n\n".join(text_parts)
+                answer = f"AI providers are temporarily unavailable. Here is the most relevant content I found:\n\n{content_text}"
+                debug_info["LLM Provider"] = "Local Context Summary"
+                debug_info["Response Source"] = "Local Fallback"
+        except Exception as e:
+            logger.error(f"Local summarizer error: {e}")
+
+    # Provider 5: Graceful Failure
+    if not answer:
+        answer = "We successfully retrieved information from the website, but all AI providers are currently unavailable. Please try again shortly."
+        debug_info["LLM Provider"] = "Graceful Failure"
+        debug_info["Response Source"] = "Error"
+
+    # Save Cloud Response to Semantic Cache
+    if answer and debug_info["Response Source"] == "Cloud" and question_embedding is not None and len(question_embedding) > 0:
+        try:
+            chunk_ids = [c.get("metadata", {}).get("chunk_id", 0) for c in context_chunks]
+            await save_to_semantic_cache(
+                str(uuid.uuid4()), url, url_hash, question, question_embedding, chunk_ids, context_hash, "default", answer
+            )
+        except Exception as e:
+            logger.error(f"Cache save error: {e}")
 
     # Extract cited sources
     sources = []
@@ -175,15 +294,23 @@ async def rag_chat(
         cited_ids = {1}
         
     for i, chunk in enumerate(context_chunks, 1):
+        meta = chunk.get("metadata", {})
         if i in cited_ids:
+            source_url = meta.get("source_url", url)
+            source_title = meta.get("source_title", "Unknown Title")
             sources.append({
-                "chunk_id": chunk.get("metadata", {}).get("chunk_id", i - 1),
-                "url": chunk.get("metadata", {}).get("url", url),
-                "title": chunk.get("metadata", {}).get("page_title", ""),
+                "chunk_id": meta.get("chunk_id", i - 1),
+                "source_url": source_url,
+                "source_title": source_title,
                 "content": chunk["content"][:200],
                 "chunk_text": chunk["content"],
                 "score": chunk.get("score", 0.0),
             })
+            
+            # Replace inline [Source X] with clickable markdown link
+            target_str = f"[Source {i}]"
+            md_link = f"[Source: {source_title}]({source_url})"
+            answer = answer.replace(target_str, md_link)
 
     # Token count
     try:

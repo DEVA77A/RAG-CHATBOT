@@ -40,6 +40,7 @@ def simple_search(
         "debug": {
             "search_type": "simple_faiss",
             "query": query,
-            "raw_results": len(results)
+            "raw_results": len(results),
+            "query_emb": query_emb
         }
     }

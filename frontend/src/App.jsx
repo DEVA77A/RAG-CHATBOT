@@ -28,6 +28,7 @@ function App() {
   // Debug Data
   const [debugData, setDebugData] = useState(null);
   const [showDebug, setShowDebug] = useState(false);
+  const [llmHealth, setLlmHealth] = useState({claude: "Checking...", gemini: "Checking..."});
 
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -41,10 +42,23 @@ function App() {
     scrollToBottom();
   }, [messages, isTyping]);
 
-  // Load history list on mount
+  // Load history list and health on mount
   useEffect(() => {
     fetchHistoryList();
+    fetchLlmHealth();
   }, []);
+
+  const fetchLlmHealth = async () => {
+    try {
+      const res = await fetch('/api/health_llm');
+      if (res.ok) {
+        const data = await res.json();
+        setLlmHealth(data);
+      }
+    } catch (e) {
+      console.error("Error fetching LLM health", e);
+    }
+  };
 
   const fetchHistoryList = async () => {
     try {
@@ -67,11 +81,11 @@ function App() {
 
     const isToday = date.toDateString() === today.toDateString();
     const isYesterday = date.toDateString() === yesterday.toDateString();
-    
+
     const timeOpts = { hour: 'numeric', minute: '2-digit' };
     if (isToday) return `Today ${date.toLocaleTimeString(undefined, timeOpts)}`;
     if (isYesterday) return `Yesterday`;
-    
+
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   };
 
@@ -94,16 +108,16 @@ function App() {
         fetch(`/api/analyze/${id}`),
         fetch(`/api/chat/${id}`)
       ]);
-      
+
       if (!analysisRes.ok) throw new Error("Failed to load analysis");
       const analysisData = await analysisRes.json();
-      
+
       setAnalysisId(analysisData.id);
       setKbStats(analysisData.kb_stats);
       setIndexedPages(analysisData.indexed_pages || []);
       setDomain(analysisData.domain);
       setUrl(analysisData.url);
-      
+
       if (chatRes.ok) {
         const chatData = await chatRes.json();
         const loadedMsgs = chatData.messages.map(m => {
@@ -111,10 +125,10 @@ function App() {
           if (Array.isArray(m.sources)) {
             parsedSources = m.sources;
           } else if (typeof m.sources === 'string') {
-            try { parsedSources = JSON.parse(m.sources); } catch(e) {}
+            try { parsedSources = JSON.parse(m.sources); } catch (e) { }
           }
           if (!Array.isArray(parsedSources)) parsedSources = [];
-          
+
           return {
             role: m.role,
             content: m.content,
@@ -169,7 +183,7 @@ function App() {
         role: 'assistant',
         content: `I've finished crawling **${data.domain}**. Indexed ${data.kb_stats.total_pages} pages and created ${data.kb_stats.total_chunks} search chunks. What would you like to know about this website?`
       }]);
-      
+
       fetchHistoryList();
 
     } catch (err) {
@@ -263,6 +277,17 @@ function App() {
         <div className="sidebar-header">
           <h2>WebIntel AI</h2>
           <span className="badge">Production RAG</span>
+        </div>
+          
+        <div className="llm-health-status" style={{ padding: '0 20px 10px 20px', fontSize: '13px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ marginBottom: '4px', display: 'flex', alignItems: 'center' }}>
+            <span style={{ marginRight: '6px' }}>{llmHealth.claude === 'Connected' ? '🟢' : '🔴'}</span>
+            Claude Haiku — {llmHealth.claude}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <span style={{ marginRight: '6px' }}>{llmHealth.gemini.includes('Connected') ? '🟢' : '🔴'}</span>
+            Gemini — {llmHealth.gemini}
+          </div>
         </div>
 
         <div className="sidebar-content">
@@ -360,6 +385,7 @@ function App() {
           <h3>{domain ? `Chatting with ${domain}` : 'Waiting for context...'}</h3>
         </div>
 
+
         <div className="chat-container">
           {messages.length === 0 ? (
             <div className="empty-state">
@@ -377,7 +403,16 @@ function App() {
                   <div className="message-content">
                     <div className="bubble markdown-body">
                       {msg.role === 'assistant' ? (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                        <>
+                          {msg.debug && msg.debug["LLM Provider"] && (
+                            <div className="provider-badge" style={{ marginBottom: '12px', padding: '4px 8px', display: 'inline-block', background: '#2d2d2d', borderRadius: '4px', fontSize: '11px', color: '#a3a3a3', fontWeight: '600', letterSpacing: '0.5px' }}>
+                              ⚡ {msg.debug["LLM Provider"].toUpperCase()}
+                              {msg.debug["Fallback Activated"] && <span style={{ color: '#ef4444', marginLeft: '6px' }}>(FALLBACK)</span>}
+                              {msg.debug["Cache Hit"] && <span style={{ color: '#3b82f6', marginLeft: '6px' }}>(CACHED)</span>}
+                            </div>
+                          )}
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                        </>
                       ) : (
                         msg.content
                       )}
@@ -386,32 +421,16 @@ function App() {
                       <div className="citations-inline">
                         <div className="citations-header">
                           <strong>Sources cited:</strong>
-                          <button className="btn-text-small" onClick={() => toggleContext(idx)}>
-                            {expandedContext[idx] ? 'Hide Context' : 'View Retrieved Context'}
-                          </button>
                         </div>
                         <div className="citation-chips">
                           {msg.sources.map((s, i) => (
-                            <a key={i} href={s.url} target="_blank" rel="noreferrer" className="citation-chip" title={s.url}>
-                              {s.title || `Source ${s.chunk_id + 1}`}
-                            </a>
+                            <div key={i} className="citation-chip">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {`[${s.source_title || 'Unknown Page'}](${s.source_url})`}
+                              </ReactMarkdown>
+                            </div>
                           ))}
                         </div>
-                        
-                        {expandedContext[idx] && (
-                          <div className="retrieved-context-viewer">
-                            {msg.sources.map((s, i) => (
-                              <div key={i} className="context-chunk">
-                                <div className="context-meta">
-                                  <span className="context-title"><strong>{s.title || `Chunk ${s.chunk_id + 1}`}</strong></span>
-                                  <span className="badge-small" style={{ marginLeft: "8px", marginRight: "8px" }}>Score: {s.score.toFixed(2)}</span>
-                                  <a href={s.url} target="_blank" rel="noreferrer" className="context-url" title={s.url}>View Page</a>
-                                </div>
-                                <div className="context-text">{s.chunk_text}</div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
                       </div>
                     )}
                   </div>

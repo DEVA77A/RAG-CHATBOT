@@ -64,12 +64,56 @@ logger = logging.getLogger("webintel")
 # App Lifecycle
 # ──────────────────────────────────────────────
 
+llm_health_status = {"claude": "Unavailable", "gemini": "Unavailable"}
+
+def health_check_llms():
+    global llm_health_status
+    logger.info("Running silent health check on LLM providers...")
+    
+    # Check Gemini Waterfall
+    from ai_engine import get_chat_model
+    gemini_models = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-1.0-pro"]
+    for m_name in gemini_models:
+        try:
+            model = get_chat_model(m_name)
+            response = model.generate_content("say hi")
+            if response and response.text:
+                llm_health_status["gemini"] = f"Connected ({m_name})"
+                logger.info(f"Gemini health check: SUCCESS on {m_name}")
+                break
+        except Exception as e:
+            logger.warning(f"Gemini health check failed on {m_name}: {e}")
+    if "Connected" not in llm_health_status["gemini"]:
+        llm_health_status["gemini"] = "Unavailable"
+
+    # Check Claude
+    try:
+        import os
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        if anthropic_key:
+            import anthropic
+            client = anthropic.Anthropic(api_key=anthropic_key)
+            message = client.messages.create(
+                model="claude-3-5-haiku-20241022",
+                max_tokens=10,
+                messages=[{"role": "user", "content": "say hi"}]
+            )
+            if message and message.content:
+                llm_health_status["claude"] = "Connected"
+                logger.info("Claude health check: SUCCESS")
+        else:
+            logger.error("Claude health check failed: Missing ANTHROPIC_API_KEY")
+    except Exception as e:
+        llm_health_status["claude"] = "Unavailable"
+        logger.error(f"Claude health check failed: {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize database on startup."""
     logger.info("Starting WebIntel AI v2.0 (Pure RAG)...")
     await init_db()
     logger.info("Database initialized")
+    health_check_llms()
     yield
     logger.info("Shutting down WebIntel AI")
 
@@ -97,6 +141,11 @@ app.add_middleware(
 # ──────────────────────────────────────────────
 # POST /api/analyze — Crawl + Index (No AI Analysis)
 # ──────────────────────────────────────────────
+
+@app.get("/api/health_llm")
+async def health_llm_endpoint():
+    return llm_health_status
+
 
 @app.post("/api/analyze", response_model=AnalyzeResponse)
 async def analyze_endpoint(request: AnalyzeRequest):
@@ -171,8 +220,8 @@ async def analyze_endpoint(request: AnalyzeRequest):
             all_chunk_texts.append(chunk["text"])
             all_metadata.append({
                 "chunk_id": global_chunk_idx,
-                "url": page["url"],
-                "page_title": page.get("title", ""),
+                "source_url": page["url"],
+                "source_title": page.get("title", ""),
                 "heading": chunk.get("heading", ""),
                 "section_type": chunk.get("section_type", "body"),
             })
@@ -297,6 +346,7 @@ async def chat_endpoint(request: ChatRequest):
         title=record.get("title", ""),
         url=record["url"],
         chat_history=history,
+        question_embedding=search_result["debug"].get("query_emb", [])
     )
     t_gen_end = time.perf_counter()
     gen_duration = t_gen_end - t_gen_start
@@ -324,7 +374,8 @@ async def chat_endpoint(request: ChatRequest):
         sources=[
             ChatSource(
                 chunk_id=s["chunk_id"],
-                url=s["url"],
+                source_url=s["source_url"],
+                source_title=s["source_title"],
                 content=s["content"],
                 chunk_text=s["chunk_text"],
                 score=s["score"],

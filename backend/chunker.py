@@ -82,17 +82,17 @@ def _detect_section_type(heading: str, page_url: str = "") -> str:
     return "body"
 
 
-def _extract_heading(line: str) -> str | None:
-    """Try to extract a heading from a line of text."""
+def _extract_heading(line: str) -> tuple[int, str] | None:
+    """Try to extract a heading from a line of text, returning (level, text)."""
     stripped = line.strip()
     # Markdown headings
-    match = re.match(r"^#{1,4}\s+(.+)$", stripped)
+    match = re.match(r"^(#{1,4})\s+(.+)$", stripped)
     if match:
-        return match.group(1).strip()
+        return len(match.group(1)), match.group(2).strip()
     # Bold-style pseudo-headings (common in scraped text)
     match = re.match(r"^\*\*(.+)\*\*$", stripped)
     if match and len(match.group(1)) < 100:
-        return match.group(1).strip()
+        return 4, match.group(1).strip()
     return None
 
 
@@ -123,21 +123,40 @@ def chunk_text_with_metadata(
     # First pass: split into sections by headings
     lines = text.split("\n")
     sections = []
-    current_heading = page_title or "Main Content"
+    
+    current_h1 = page_title or "Main Content"
+    current_h2 = ""
+    current_h3 = ""
+    current_heading = current_h1
     current_lines = []
 
     for line in lines:
-        heading = _extract_heading(line)
-        if heading:
+        heading_info = _extract_heading(line)
+        if heading_info:
+            level, heading_text = heading_info
+            
             # Flush current section
             if current_lines:
                 section_text = "\n".join(current_lines).strip()
                 if section_text:
                     sections.append({
-                        "heading": current_heading,
+                        "heading": current_h1,
+                        "sub_heading": current_h2,
+                        "sub_sub_heading": current_h3,
                         "text": section_text,
                     })
-            current_heading = heading
+            
+            if level == 1:
+                current_h1 = heading_text
+                current_h2 = ""
+                current_h3 = ""
+            elif level == 2:
+                current_h2 = heading_text
+                current_h3 = ""
+            else:
+                current_h3 = heading_text
+                
+            current_heading = heading_text
             current_lines = []
         else:
             current_lines.append(line)
@@ -147,7 +166,9 @@ def chunk_text_with_metadata(
         section_text = "\n".join(current_lines).strip()
         if section_text:
             sections.append({
-                "heading": current_heading,
+                "heading": current_h1,
+                "sub_heading": current_h2,
+                "sub_sub_heading": current_h3,
                 "text": section_text,
             })
 
@@ -162,10 +183,12 @@ def chunk_text_with_metadata(
         section_text = section["text"]
 
         def format_chunk(chunk_content):
-            intro = f"The following is a section from the page '{page_title}'."
-            if section["heading"]:
-                intro += f" It is located under the heading '{section['heading']}'."
-            intro += f"\nContent: {chunk_content}"
+            intro = f"[PAGE]\n{page_title or 'Main Content'}\n\n[SECTION]\n{section['heading']}"
+            if section.get('sub_heading'):
+                intro += f"\n\n[SUB HEADING]\n{section['sub_heading']}"
+            if section.get('sub_sub_heading'):
+                intro += f"\n\n[SUB SUB HEADING]\n{section['sub_sub_heading']}"
+            intro += f"\n\n[CONTENT]\n{chunk_content}"
             return intro
 
         if len(section_text) <= chunk_size:

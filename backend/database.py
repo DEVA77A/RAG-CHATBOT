@@ -53,6 +53,19 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (analysis_id) REFERENCES analyses(id)
 );
+
+CREATE TABLE IF NOT EXISTS semantic_cache (
+    id TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    url_hash TEXT NOT NULL,
+    question TEXT NOT NULL,
+    question_embedding TEXT NOT NULL,
+    chunk_ids TEXT NOT NULL,
+    context_hash TEXT NOT NULL,
+    persona TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 # ──────────────────────────────────────────────
@@ -141,6 +154,45 @@ async def find_cached_analysis(content_hash: str, persona: str) -> dict | None:
         ) as cursor:
             row = await cursor.fetchone()
             return dict(row) if row else None
+
+
+# ──────────────────────────────────────────────
+# Semantic Cache CRUD
+# ──────────────────────────────────────────────
+
+async def save_to_semantic_cache(
+    cache_id: str,
+    url: str,
+    url_hash: str,
+    question: str,
+    question_embedding: list[float],
+    chunk_ids: list[int],
+    context_hash: str,
+    persona: str,
+    answer: str
+):
+    import json
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """INSERT INTO semantic_cache 
+               (id, url, url_hash, question, question_embedding, chunk_ids, context_hash, persona, answer, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (cache_id, url, url_hash, question, json.dumps(question_embedding), json.dumps(chunk_ids), context_hash, persona, answer, datetime.now(timezone.utc).isoformat())
+        )
+        await db.commit()
+
+async def find_in_semantic_cache(url_hash: str, context_hash: str, persona: str) -> list[dict]:
+    """Fetch potential semantic cache hits for python-side cosine similarity filtering."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM semantic_cache
+               WHERE url_hash = ? AND context_hash = ? AND persona = ?
+               ORDER BY created_at DESC""",
+            (url_hash, context_hash, persona)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
 
 async def get_all_analyses() -> list[dict]:

@@ -42,7 +42,8 @@ class KBStats(BaseModel):
 
 class ChatSource(BaseModel):
     chunk_id: int
-    url: str
+    source_url: str
+    source_title: str
     content: str
     chunk_text: str
     score: float
