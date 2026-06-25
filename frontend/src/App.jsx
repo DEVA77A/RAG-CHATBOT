@@ -88,7 +88,13 @@ function App() {
 
   const formatDate = (isoString) => {
     if (!isoString) return '';
-    const date = new Date(isoString + "Z"); // Ensure UTC parsing
+    // SQLite format is YYYY-MM-DD HH:MM:SS. Convert to standard YYYY-MM-DDTHH:MM:SSZ
+    const formattedStr = isoString.includes('T') ? isoString : isoString.replace(' ', 'T');
+    // If the timestamp already has a timezone indicator (e.g. Z or +00:00), don't append Z
+    const hasTimezone = /Z$|[+-]\d{2}:\d{2}$/.test(formattedStr);
+    const date = new Date(hasTimezone ? formattedStr : formattedStr + "Z");
+    if (isNaN(date.getTime())) return isoString;
+    
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
@@ -289,18 +295,23 @@ function App() {
       {/* ─── LEFT SIDEBAR ─── */}
       <aside className="sidebar">
         <div className="sidebar-header">
-          <h2>WebIntel AI</h2>
-          <span className="badge">Production RAG</span>
+          <div className="app-logo">
+            <div className="logo-icon">R</div>
+            <div className="logo-info">
+              <h2>RAG X</h2>
+              <span className="logo-version">Enterprise Alpha</span>
+            </div>
+          </div>
         </div>
           
-        <div className="llm-health-status" style={{ padding: '0 20px 10px 20px', fontSize: '13px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ marginBottom: '4px', display: 'flex', alignItems: 'center' }}>
-            <span style={{ marginRight: '6px' }}>{llmHealth.claude === 'Connected' ? '🟢' : '🔴'}</span>
-            Claude Haiku — {llmHealth.claude}
+        <div className="llm-health-status">
+          <div className="health-row">
+            <span className={`status-dot ${llmHealth.claude === 'Connected' ? 'online' : 'offline'}`}></span>
+            <span className="health-name">Claude Haiku — {llmHealth.claude}</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            <span style={{ marginRight: '6px' }}>{llmHealth.gemini.includes('Connected') ? '🟢' : '🔴'}</span>
-            Gemini — {llmHealth.gemini}
+          <div className="health-row">
+            <span className={`status-dot ${llmHealth.gemini.includes('Connected') ? 'online' : 'offline'}`}></span>
+            <span className="health-name">Gemini — {llmHealth.gemini}</span>
           </div>
         </div>
 
@@ -490,7 +501,7 @@ function App() {
                 className="btn-send"
                 disabled={!input.trim() || status !== 'ready' || isTyping}
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
               </button>
             </div>
             <div className="footer-text">
