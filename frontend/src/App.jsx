@@ -300,7 +300,7 @@ function App() {
               <img src="/logo.jpg" alt="RAGX Logo" />
             </div>
             <div className="logo-info">
-              <h2>RAGX</h2>
+              <h2>RAG X</h2>
               <span className="logo-version">Enterprise Alpha</span>
             </div>
           </div>
@@ -421,7 +421,9 @@ function App() {
         <div className="chat-container">
           {messages.length === 0 ? (
             <div className="empty-state">
-              <div className="empty-icon">🌐</div>
+              <div className="empty-logo-center">
+                <img src="/logo.jpg" alt="RAG X Logo" />
+              </div>
               <h2>Retrieval-Augmented Generation</h2>
               <p>Enter a URL in the sidebar to build a knowledge base, then ask questions grounded in that context.</p>
             </div>
@@ -429,8 +431,8 @@ function App() {
             <div className="messages-wrapper">
               {messages.map((msg, idx) => (
                 <div key={idx} className={`message-row ${msg.role}`}>
-                  <div className="avatar">
-                    {msg.role === 'user' ? 'U' : 'AI'}
+                  <div className="avatar assistant-avatar">
+                    {msg.role === 'user' ? 'U' : <img src="/logo.jpg" alt="RAG X Logo" />}
                   </div>
                   <div className="message-content">
                     <div className="bubble markdown-body">
@@ -470,7 +472,9 @@ function App() {
               ))}
               {isTyping && (
                 <div className="message-row assistant">
-                  <div className="avatar">AI</div>
+                  <div className="avatar assistant-avatar">
+                    <img src="/logo.jpg" alt="RAG X Logo" />
+                  </div>
                   <div className="message-content">
                     <div className="typing-indicator">
                       <span></span><span></span><span></span>
