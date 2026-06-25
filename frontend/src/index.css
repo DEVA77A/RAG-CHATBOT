@@ -45,6 +45,7 @@ body {
   background-color: var(--bg-main);
   color: var(--text-secondary);
   line-height: 1.6;
+  font-size: 15px; /* Increased base font size for clearer text */
   height: 100vh;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
@@ -101,19 +102,32 @@ body {
   gap: 12px;
 }
 
-.logo-icon {
+.logo-circle {
   width: 32px;
   height: 32px;
-  background-color: var(--accent);
-  color: #ffffff;
-  border-radius: 6px;
-  font-weight: 700;
-  font-size: 1.1rem;
-  line-height: 32px;
-  text-align: center;
-  box-shadow: 0 0 15px rgba(220, 38, 38, 0.35);
-  font-family: var(--font-sans);
-  user-select: none;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #000000;
+  box-shadow: 0 0 12px rgba(220, 38, 38, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.05); /* blends logo black with app background */
+  flex-shrink: 0;
+  transition: transform 0.2s ease-in-out;
+}
+
+.logo-circle:hover {
+  transform: scale(1.05);
+}
+
+.logo-circle img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  filter: brightness(1.1) contrast(1.1); /* merges/enhances details */
+  display: block;
 }
 
 .logo-info {
@@ -271,7 +285,7 @@ select {
   border: 1px solid var(--border);
   color: var(--text-primary);
   border-radius: 8px;
-  font-size: 0.85rem;
+  font-size: 0.9rem; /* Increased size */
   outline: none;
   font-family: var(--font-sans);
   transition: all 0.2s ease;
@@ -615,7 +629,7 @@ select:focus {
 
 /* Chat Bubbles */
 .bubble {
-  font-size: 0.92rem;
+  font-size: 0.98rem; /* Increased size */
   line-height: 1.6;
   word-wrap: break-word;
 }
@@ -763,7 +777,7 @@ select:focus {
   border: none;
   color: var(--text-primary);
   font-family: var(--font-sans);
-  font-size: 0.92rem;
+  font-size: 0.98rem; /* Increased size */
   resize: none;
   outline: none;
   height: 24px;
@@ -846,7 +860,7 @@ select:focus {
 .markdown-body td {
   border: 1px solid var(--border);
   padding: 10px 14px;
-  font-size: 0.85rem;
+  font-size: 0.9rem; /* Increased size */
 }
 .markdown-body th {
   background-color: var(--bg-input);
@@ -860,7 +874,7 @@ select:focus {
   border: 1px solid var(--border);
   padding: 2px 5px;
   border-radius: 4px;
-  font-size: 0.82rem;
+  font-size: 0.88rem; /* Increased size */
   color: var(--accent-light);
 }
 
@@ -879,7 +893,7 @@ select:focus {
   background: none;
   border: none;
   padding: 0;
-  font-size: 0.8rem;
+  font-size: 0.88rem; /* Increased size */
   color: #f3f3f5;
   font-family: var(--font-mono);
 }

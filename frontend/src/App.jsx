@@ -296,9 +296,11 @@ function App() {
       <aside className="sidebar">
         <div className="sidebar-header">
           <div className="app-logo">
-            <div className="logo-icon">R</div>
+            <div className="logo-circle">
+              <img src="/logo.jpg" alt="RAGX Logo" />
+            </div>
             <div className="logo-info">
-              <h2>RAG X</h2>
+              <h2>RAGX</h2>
               <span className="logo-version">Enterprise Alpha</span>
             </div>
           </div>
