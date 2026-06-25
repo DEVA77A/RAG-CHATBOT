@@ -79,3 +79,27 @@ class ChatResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str = "ok"
     version: str = "2.0.0"
+
+
+class AnalysisHistoryItem(BaseModel):
+    id: str
+    url: str
+    status: str
+    title: str = ""
+    domain: str = ""
+    created_at: str = ""
+
+
+class AnalysisListResponse(BaseModel):
+    analyses: list[AnalysisHistoryItem] = []
+
+
+class ChatHistoryMessage(BaseModel):
+    role: str
+    content: str
+    sources: list[dict] | None = None
+    created_at: str = ""
+
+
+class ChatHistoryResponse(BaseModel):
+    messages: list[ChatHistoryMessage] = []

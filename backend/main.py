@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from models import (
@@ -28,6 +29,10 @@ from models import (
     HealthResponse,
     IndexedPage,
     KBStats,
+    AnalysisListResponse,
+    AnalysisHistoryItem,
+    ChatHistoryMessage,
+    ChatHistoryResponse,
 )
 from database import (
     init_db,
@@ -36,11 +41,12 @@ from database import (
     get_analysis,
     save_chat_message,
     get_chat_history,
+    get_all_analyses,
 )
 from scraper import crawl_website
 from chunker import chunk_text_with_metadata, embed_texts, embed_query
 from vector_store import FAISSStore
-from retriever import BM25Index, hybrid_search
+from retriever import simple_search
 from ai_engine import rag_chat
 
 # ──────────────────────────────────────────────
@@ -166,7 +172,7 @@ async def analyze_endpoint(request: AnalyzeRequest):
             all_metadata.append({
                 "chunk_id": global_chunk_idx,
                 "url": page["url"],
-                "title": page.get("title", ""),
+                "page_title": page.get("title", ""),
                 "heading": chunk.get("heading", ""),
                 "section_type": chunk.get("section_type", "body"),
             })
@@ -245,6 +251,8 @@ async def chat_endpoint(request: ChatRequest):
     analysis_id = request.analysis_id
     question = request.message.strip()
     top_k = request.top_k
+    if "detail" in question.lower():
+        top_k = max(top_k, 8)
 
     if not question:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
@@ -262,20 +270,17 @@ async def chat_endpoint(request: ChatRequest):
 
     store = FAISSStore.load(analysis_id)
 
-    # Build BM25 index from stored chunks
-    bm25_index = BM25Index(store.get_all_chunks())
-
-    # Hybrid search
-    search_result = hybrid_search(
+    # Simple FAISS search
+    t_search_start = time.perf_counter()
+    search_result = simple_search(
         query=question,
         faiss_store=store,
-        bm25_index=bm25_index,
-        embed_query_fn=embed_query,
+        embed_fn=embed_query,
         top_k=top_k,
     )
+    retrieval_duration = time.perf_counter() - t_search_start
 
     context_chunks = search_result["chunks"]
-    retrieval_duration = search_result["retrieval_time"]
 
     # Get chat history
     history = await get_chat_history(analysis_id, limit=10)
@@ -336,28 +341,35 @@ async def chat_endpoint(request: ChatRequest):
 
 
 # ──────────────────────────────────────────────
-# GET /api/health
+# GET /api/analyses — List all analyses
 # ──────────────────────────────────────────────
 
-@app.get("/api/health", response_model=HealthResponse)
-async def health_check():
-    """Health check endpoint."""
-    return HealthResponse(status="ok", version="2.0.0")
+@app.get("/api/analyses", response_model=AnalysisListResponse)
+async def list_analyses():
+    """List all previously crawled and analyzed websites."""
+    analyses = await get_all_analyses()
+    clean_analyses = []
+    for a in analyses:
+        clean_a = {k: (v if v is not None else "") for k, v in a.items()}
+        clean_analyses.append(AnalysisHistoryItem(**clean_a))
+    return AnalysisListResponse(analyses=clean_analyses)
 
 
 # ──────────────────────────────────────────────
-# Entrypoint
+# GET /api/analyze/{analysis_id} — Fetch analysis details
 # ──────────────────────────────────────────────
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8001,
-        reload=False,
-        log_level="info",
-    )
+@app.get("/api/analyze/{analysis_id}", response_model=AnalyzeResponse)
+async def get_analyze_endpoint(analysis_id: str):
+    """Fetch details of an existing analysis."""
+    data = await get_analysis(analysis_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+        
+    scraped = json.loads(data.get("scraped_content", "{}"))
+    return AnalyzeResponse(
+        id=data["id"],
+        url=data["url"],
         status=data["status"],
         title=data.get("title", ""),
         domain=data.get("domain", ""),
@@ -379,11 +391,19 @@ async def get_chat_history_endpoint(analysis_id: str):
     history = await get_chat_history(analysis_id, limit=50)
     messages = []
     for h in history:
+        raw_sources = h.get("sources")
+        parsed_sources = []
+        if raw_sources:
+            try:
+                parsed_sources = json.loads(raw_sources)
+            except Exception:
+                pass
+                
         messages.append(ChatHistoryMessage(
             role=h["role"],
             content=h["content"],
-            sources=h.get("sources"),
-            created_at=h["created_at"],
+            sources=parsed_sources,
+            created_at=h["created_at"] if h["created_at"] else "",
         ))
     return ChatHistoryResponse(messages=messages)
 

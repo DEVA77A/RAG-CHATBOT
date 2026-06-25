@@ -36,7 +36,7 @@ def get_chat_model() -> genai.GenerativeModel:
         genai.configure(api_key=api_key)
 
         _chat_model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash",
+            model_name="gemini-3.5-flash",
             system_instruction=CHAT_SYSTEM_INSTRUCTION,
             generation_config=genai.GenerationConfig(
                 temperature=0.0,
@@ -88,9 +88,6 @@ def validate_citations(answer: str, k: int) -> bool:
 # RAG Chat
 # ──────────────────────────────────────────────
 
-RETRIEVAL_THRESHOLD = 0.35
-
-
 async def rag_chat(
     question: str,
     context_chunks: list[dict],
@@ -100,23 +97,19 @@ async def rag_chat(
     **kwargs,  # Accept extra kwargs for backward compat
 ) -> dict:
     """
-    Answer a user question using hybrid-retrieved context with strict grounding.
+    Answer a user question using simple-retrieved context with strict grounding.
     
     Returns dict with:
         answer, sources, chunk_count, avg_similarity, debug
     """
     k = len(context_chunks)
-
-    # Check retrieval confidence
-    max_score = max((c.get("score", 0.0) for c in context_chunks), default=0.0)
     avg_sim = sum(c.get("score", 0.0) for c in context_chunks) / k if k > 0 else 0.0
 
-    if not context_chunks or max_score < RETRIEVAL_THRESHOLD:
-        logger.info(f"Retrieval below threshold ({max_score:.3f} < {RETRIEVAL_THRESHOLD}). Refusing.")
+    if not context_chunks:
         return _build_refusal_response(
             "Information not found in analyzed website content.",
             context_chunks, url, avg_sim,
-            "Bypassed LLM: retrieval score below threshold."
+            "No context chunks provided."
         )
 
     # Build prompt
@@ -128,7 +121,7 @@ async def rag_chat(
         chat_history=chat_history,
     )
 
-    logger.info(f"RAG chat: '{question[:80]}' with {k} chunks. Max score: {max_score:.3f}")
+    logger.info(f"RAG chat: '{question[:80]}' with {k} chunks.")
 
     # Generate answer
     model = get_chat_model()
@@ -137,42 +130,56 @@ async def rag_chat(
         answer = response.text.strip()
     except Exception as e:
         logger.error(f"Gemini error: {e}")
-        # Fallback: return top chunk content directly
-        if context_chunks:
-            top = context_chunks[0]
-            answer = f"Based on the website content:\n\n{top['content'][:500]} [Source 1]"
+        # Fallback: bypass quota limits by formatting chunks directly
+        is_detailed = "detail" in question.lower()
+        
+        if is_detailed:
+            text_parts = []
+            for c in context_chunks:
+                text = c['content']
+                if "Content: " in text:
+                    text = text.split("Content: ", 1)[-1]
+                text_parts.append(text.strip())
+            content_text = "\n\n".join(text_parts)
         else:
-            return _build_refusal_response(
-                "Information not found in analyzed website content.",
-                context_chunks, url, avg_sim,
-                f"LLM error: {str(e)}"
-            )
+            top = context_chunks[0]
+            content_text = top['content']
+            if "Content: " in content_text:
+                content_text = content_text.split("Content: ", 1)[-1]
+            content_text = f"{content_text[:350].strip()}..."
 
-    # Validate citations
-    if not validate_citations(answer, k):
-        logger.warning("First answer failed citation check. Regenerating with strict prompt...")
-        strict_prompt = prompt + (
-            "\n\nCRITICAL: Your previous answer was REJECTED. You MUST cite sources using [Source N]. "
-            "If you cannot answer from the context, respond EXACTLY: "
-            "'Information not found in analyzed website content.'"
+        top = context_chunks[0]
+        page_title = top.get("metadata", {}).get("page_title", "Unknown Title")
+        source_url = top.get("metadata", {}).get("url", url)
+        score = top.get("score", 0.0)
+        chunk_id = top.get("metadata", {}).get("chunk_id", 1)
+        heading = top.get("metadata", {}).get("heading", "Main")
+        
+        source_card = (
+            f"\n\n──────────────────────────\n"
+            f"📄 Source\n"
+            f"Page: {page_title}\n"
+            f"Section: {heading}\n"
+            f"Original URL: {source_url}\n"
+            f"Similarity: {score:.2f}\n"
+            f"Chunk ID: {chunk_id}\n"
+            f"────────────────────────── [Source 1]"
         )
-        try:
-            response = model.generate_content(strict_prompt)
-            answer = response.text.strip()
-        except Exception:
-            answer = "Information not found in analyzed website content."
-
-        if not validate_citations(answer, k):
-            answer = "Information not found in analyzed website content."
+        answer = f"{content_text}{source_card}"
 
     # Extract cited sources
     sources = []
     cited_ids = set(int(i) for i in re.findall(r"\[Source (\d+)\]", answer))
+    # If no citations were generated by LLM, fallback to citing the top chunk to prevent frontend crash
+    if not cited_ids and context_chunks:
+        cited_ids = {1}
+        
     for i, chunk in enumerate(context_chunks, 1):
         if i in cited_ids:
             sources.append({
                 "chunk_id": chunk.get("metadata", {}).get("chunk_id", i - 1),
                 "url": chunk.get("metadata", {}).get("url", url),
+                "title": chunk.get("metadata", {}).get("page_title", ""),
                 "content": chunk["content"][:200],
                 "chunk_text": chunk["content"],
                 "score": chunk.get("score", 0.0),
@@ -192,7 +199,6 @@ async def rag_chat(
                 "heading": c.get("metadata", {}).get("heading", ""),
                 "chunk_text": c["content"],
                 "score": c.get("score", 0.0),
-                "rrf_score": c.get("rrf_score", 0.0),
             }
             for i, c in enumerate(context_chunks)
         ],

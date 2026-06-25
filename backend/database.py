@@ -143,6 +143,19 @@ async def find_cached_analysis(content_hash: str, persona: str) -> dict | None:
             return dict(row) if row else None
 
 
+async def get_all_analyses() -> list[dict]:
+    """Fetch all completed analyses."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT id, url, status, title, domain, created_at 
+               FROM analyses 
+               ORDER BY created_at DESC"""
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
 # ──────────────────────────────────────────────
 # Chat CRUD
 # ──────────────────────────────────────────────

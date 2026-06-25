@@ -161,12 +161,16 @@ def chunk_text_with_metadata(
         section_type = _detect_section_type(section["heading"], page_url)
         section_text = section["text"]
 
-        # Prefix chunk with heading context for better retrieval
-        heading_prefix = f"[{section['heading']}] " if section['heading'] else ""
+        def format_chunk(chunk_content):
+            intro = f"The following is a section from the page '{page_title}'."
+            if section["heading"]:
+                intro += f" It is located under the heading '{section['heading']}'."
+            intro += f"\nContent: {chunk_content}"
+            return intro
 
         if len(section_text) <= chunk_size:
             all_chunks.append({
-                "text": heading_prefix + section_text,
+                "text": format_chunk(section_text),
                 "heading": section["heading"],
                 "section_type": section_type,
                 "page_title": page_title,
@@ -193,7 +197,7 @@ def chunk_text_with_metadata(
                 chunk = section_text[start:end].strip()
                 if chunk:
                     all_chunks.append({
-                        "text": heading_prefix + chunk,
+                        "text": format_chunk(chunk),
                         "heading": section["heading"],
                         "section_type": section_type,
                         "page_title": page_title,

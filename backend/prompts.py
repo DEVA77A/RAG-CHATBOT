@@ -15,36 +15,53 @@ The prompt enforces:
 # Chat System Instruction
 # ──────────────────────────────────────────────
 
-CHAT_SYSTEM_INSTRUCTION = """You are a strict Retrieval-Augmented Generation (RAG) assistant.
-Your ONLY source of knowledge is the context chunks provided in each message.
-You must NEVER use your own pre-trained knowledge, prior memory, or make assumptions.
+CHAT_SYSTEM_INSTRUCTION = """The LLM must NEVER dump retrieved chunks.
 
-Absolute Rules:
-1. If the question is completely unrelated to the topics in the context chunks, respond with EXACTLY: "This question is unrelated to the analyzed website." — nothing else.
-2. If the context chunks do not contain sufficient information to answer the question, respond with EXACTLY: "Information not found in analyzed website content." — nothing else.
-3. When you CAN answer, use ONLY facts from the context. Every claim must have a [Source N] citation.
-4. Do NOT paraphrase questions. Do NOT add disclaimers. Do NOT say "based on the provided context".
-5. Be concise, direct, and factual."""
+STEP 1: Read all retrieved chunks.
+STEP 2: Understand them.
+STEP 3: Answer naturally using ONLY retrieved information.
+STEP 4: Preserve every fact.
+STEP 5: Never invent.
+STEP 6: Never expose raw chunk text unless explicitly requested.
 
+Think of yourself as explaining the retrieved information to another engineer. NOT copying documentation.
 
-# ──────────────────────────────────────────────
-# RAG Chat Prompt Builder
-# ──────────────────────────────────────────────
+Every answer must look like this:
 
-RAG_CHAT_TEMPLATE = """Answer the following question using ONLY the context chunks below.
+Answer
+Natural explanation.
+Well written.
+Easy to read.
+Maximum 200 words unless user explicitly asks for more.
+If appropriate:
+Use bullet points.
+Use headings.
+Use numbered lists.
+Never dump paragraphs directly from the retrieved chunk.
 
+SOURCE CARD
+Below every answer show
+──────────────────────────
+📄 Source
+Page
+Section
+Original URL
+Similarity
+Chunk ID
+View Retrieved Context
+──────────────────────────
+
+Never display: Unknown Title
+Never lose metadata."""
+
+RAG_CHAT_TEMPLATE = """Answer the user's question naturally using the context.
+{detail_override}
 --- CONTEXT CHUNKS ---
 {context}
 --- END CONTEXT ---
 
 {history_section}
-Question: {question}
-
-Rules:
-- Use ONLY facts from the context chunks above. Cite each fact with [Source N].
-- If the context does not contain the answer, respond EXACTLY: "Information not found in analyzed website content."
-- If the question is unrelated to the context topics, respond EXACTLY: "This question is unrelated to the analyzed website."
-- Never use pretrained knowledge. Never infer. Never guess."""
+Question: {question}"""
 
 
 def build_chat_prompt(
@@ -68,11 +85,15 @@ def build_chat_prompt(
         source_url = chunk.get("metadata", {}).get("url", url)
         heading = chunk.get("metadata", {}).get("heading", "")
         
-        header = f"[Source {i}] (similarity: {score:.2f})"
+        header = f"[Chunk ID: {chunk.get('metadata', {}).get('chunk_id', i)}]\n"
+        page_title = chunk.get("metadata", {}).get("page_title", "")
+        if page_title:
+            header += f"Page: {page_title}\n"
         if heading:
-            header += f" [Section: {heading}]"
+            header += f"Section: {heading}\n"
         if source_url:
-            header += f" [URL: {source_url}]"
+            header += f"Original URL: {source_url}\n"
+        header += f"Similarity: {score:.2f}\n"
         
         context_parts.append(f"{header}\n{content}")
 
@@ -89,10 +110,13 @@ def build_chat_prompt(
             history_lines.append(f"{role}: {content}")
         history_section = "Previous conversation:\n" + "\n".join(history_lines) + "\n"
 
+    detail_override = ""
+    if "detail" in question.lower():
+        detail_override = "\nUSER REQUESTED DETAILS: Ignore the 200-word limit. Provide a highly detailed, comprehensive, multi-paragraph explanation synthesizing all retrieved chunks."
+
     return RAG_CHAT_TEMPLATE.format(
         context=context,
         history_section=history_section,
         question=question,
-    )
-        question=question,
+        detail_override=detail_override,
     )
