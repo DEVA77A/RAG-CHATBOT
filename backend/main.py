@@ -293,7 +293,7 @@ async def analyze_endpoint(request: AnalyzeRequest):
 
 def is_summary_query(query: str, chat_history: list[dict] | None = None) -> bool:
     """Check if the question has a 'website summary' intent."""
-    q = query.lower().strip().replace("?", "").replace(".", "")
+    q = query.lower().strip().replace("?", "").replace(".", "").replace(",", "")
     summary_phrases = {
         "summarize this website", "summarise this website",
         "summarize the website", "summarise the website",
@@ -301,10 +301,14 @@ def is_summary_query(query: str, chat_history: list[dict] | None = None) -> bool
         "website summary", "website overview",
         "give me an overview of this website", "give me an overview of the website",
         "what did you learn from this website", "what did you learn from this site",
-        "what did you learn", "explain the website", "explain the site"
+        "what did you learn", "explain the website", "explain the site",
+        "give overview", "give me overview"
     }
     if any(phrase in q for phrase in summary_phrases):
         return True
+    for phrase in summary_phrases:
+        if phrase in q:
+            return True
     is_first = not chat_history or len(chat_history) == 0
     if is_first and q in {"summarize it", "summarise it", "give me an overview", "overview", "summarize", "summarise"}:
         return True
@@ -319,6 +323,41 @@ async def chat_endpoint(request: ChatRequest):
     t_start = time.perf_counter()
     analysis_id = request.analysis_id
     question = request.message.strip()
+    
+    # ── Greeting Bypass (Issue 1) ──
+    q_norm = question.lower().strip().rstrip(".!?, ")
+    greetings = {"hi", "hello", "hey", "good morning", "good evening", "thanks", "thank you", "bye", "goodbye"}
+    if q_norm in greetings:
+        logger.info(f"Greeting detected: '{question}'. Bypassing retrieval.")
+        user_msg_id = str(uuid.uuid4())
+        await save_chat_message(user_msg_id, analysis_id, "user", question)
+        
+        answer = "Hello! 👋\n\nHow can I help you understand the indexed website?"
+        
+        assistant_msg_id = str(uuid.uuid4())
+        await save_chat_message(
+            assistant_msg_id, analysis_id, "assistant",
+            answer,
+            sources="[]",
+        )
+        
+        total_duration = time.perf_counter() - t_start
+        return ChatResponse(
+            answer=answer,
+            sources=[],
+            chunk_count=0,
+            avg_similarity=0.0,
+            debug={
+                "retrieval_time": 0.0,
+                "generation_time": 0.0,
+                "total_time": total_duration,
+                "search_type": "greeting"
+            },
+            retrieval_time=0.0,
+            generation_time=0.0,
+            total_time=total_duration
+        )
+
     top_k = request.top_k
     if "detail" in question.lower():
         top_k = max(top_k, 8)

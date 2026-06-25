@@ -79,53 +79,66 @@ def validate_retrieved_chunks(question: str, context_chunks: list[dict], title: 
             "refusal_case": "Case A"
         }
         
-    # Heuristic: Check similarity score
-    # Cosine similarity in FAISS is normalized. Under 0.25 similarity indicates very weak retrieval match.
-    max_score = max(c.get("score", 0.0) for c in context_chunks)
+    chunks_text = "\n\n".join([f"[Chunk {i+1}]: {c['content']}" for i, c in enumerate(context_chunks)])
     
-    if max_score < 0.25:
-        # Fast LLM-based classification to distinguish between Case B (related but unindexed) and Case C (unrelated)
-        refusal_case = "Case C"
-        try:
-            val_model = get_validation_model()
-            prompt = (
-                "You are a strict RAG validation classifier.\n"
-                "Given a website's topic (represented by its URL and Title) and a User Question, "
-                "determine if the question is related to the website's general domain/content topic, "
-                "or if it is completely unrelated.\n\n"
-                f"Website Title: {title}\n"
-                f"Website URL: {url}\n"
-                f"User Question: {question}\n\n"
-                "Reply with exactly one word: 'RELATED' or 'UNRELATED' (no other text, no punctuation)."
-            )
-            response = val_model.generate_content(prompt)
-            classification = response.text.strip().upper()
-            if "RELATED" in classification:
-                refusal_case = "Case B"
-            else:
-                refusal_case = "Case C"
-            logger.info(f"Refusal classifier classified '{question}' on {title or url} as: {refusal_case} (LLM reply: '{classification}')")
-        except Exception as e:
-            logger.warning(f"Failed to run LLM refusal classifier: {e}. Falling back to keyword heuristics.")
+    refusal_case = None
+    confidence = "High"
+    chunk_relevance = [True] * len(context_chunks)
+    
+    # Fast LLM-based classification to validate retrieval, determine if retrieved evidence answers the question,
+    # and classify refusals (Case A/B/C)
+    try:
+        val_model = get_validation_model()
+        prompt = (
+            "You are a strict RAG validation classifier.\n"
+            "You are given a website's topic (URL and Title), a set of retrieved text chunks from the website, and a User Question.\n\n"
+            f"Website Title: {title}\n"
+            f"Website URL: {url}\n\n"
+            "Retrieved Chunks:\n"
+            f"{chunks_text}\n\n"
+            f"User Question: {question}\n\n"
+            "Your task is to classify this interaction into exactly one of three categories:\n"
+            "1. 'ANSWERS': The retrieved chunks contain sufficient, concrete, and directly relevant facts to fully and accurately answer the User Question without using external pre-trained knowledge or making guesses.\n"
+            "2. 'RELATED_BUT_MISSING': The retrieved chunks do NOT contain enough information to answer the question, BUT the question's topic clearly belongs to or is expected to exist on this website's domain, technology, product, or topic (e.g. asking about 'hooks' or 'Props and State' on React Docs, or 'OOP' on Python Docs, or product specifications/pricing on a company site).\n"
+            "3. 'UNRELATED': The user's question is completely unrelated to the website's domain, business, or technology (e.g. asking about sports, unrelated celebrities, general knowledge, or other completely unrelated websites like asking 'Who won FIFA?' or 'Who won IPL 2026?' on Hugging Face, GeeksforGeeks, React, or Python docs).\n\n"
+            "Reply with exactly one word: 'ANSWERS', 'RELATED_BUT_MISSING', or 'UNRELATED' (no other text, no explanation)."
+        )
+        response = val_model.generate_content(prompt)
+        classification = response.text.strip().upper()
+        logger.info(f"RAG Retrieval Validator classified '{question}' on {title or url} as: {classification}")
+        
+        if "RELATED_BUT_MISSING" in classification:
+            refusal_case = "Case B"  # Maps to Missing Page Detection
+            confidence = "Low"
+            chunk_relevance = [False] * len(context_chunks)
+        elif "UNRELATED" in classification:
+            refusal_case = "Case C"  # Maps to Unrelated Question
+            confidence = "Low"
+            chunk_relevance = [False] * len(context_chunks)
+        elif "ANSWERS" in classification:
+            refusal_case = None
+            confidence = "High"
+            chunk_relevance = [True] * len(context_chunks)
+        else:
+            refusal_case = None
+    except Exception as e:
+        logger.warning(f"Failed to run LLM retrieval validator: {e}. Falling back to heuristics.")
+        # Fallback keyword heuristics:
+        max_score = max(c.get("score", 0.0) for c in context_chunks)
+        if max_score < 0.25:
             q_words = set(re.findall(r'\b\w+\b', question.lower()))
             domain_words = set(re.findall(r'\b\w+\b', (title or url).lower()))
             if q_words.intersection(domain_words):
                 refusal_case = "Case B"
             else:
                 refusal_case = "Case C"
+            confidence = "Low"
+            chunk_relevance = [False] * len(context_chunks)
             
-        return {
-            "chunk_relevance": [False] * len(context_chunks),
-            "confidence": "Low",
-            "refusal_case": refusal_case
-        }
-        
-    # For higher similarity scores, let the main LLM call perform semantic validation.
-    # By default, we keep all retrieved chunks and let the LLM filter or refuse based on its system instructions.
     return {
-        "chunk_relevance": [True] * len(context_chunks),
-        "confidence": "High",
-        "refusal_case": None
+        "chunk_relevance": chunk_relevance,
+        "confidence": confidence,
+        "refusal_case": refusal_case
     }
 
 
@@ -140,7 +153,10 @@ _REFUSAL_RESPONSES = {
     "I could not find pricing information in the indexed website content.",
     "The requested information may exist on the website, but the relevant page was not indexed during crawling.\n\nPlease increase crawl depth and analyze the website again.",
     "The requested information may exist on the website, but the relevant page was not indexed. Try increasing the crawl depth and analyze again.",
+    "The requested information may exist on this website, but the relevant page was not indexed.\n\nPlease increase crawl depth and analyze again.",
     "This question is unrelated to the indexed website.",
+    "This question is unrelated to the indexed website.\n\nI can only answer questions using the content available in the analyzed website.",
+    "Hello! 👋\n\nHow can I help you understand the indexed website?",
 }
 
 
@@ -209,18 +225,16 @@ async def rag_chat(
     
     # Check if we should refuse immediately
     if not filtered_chunks or refusal_case or confidence == "Low":
-        if not refusal_case:
-            refusal_case = "Case A"
-            
-        if refusal_case == "Case A":
-            if any(kw in question.lower() for kw in ["price", "pricing", "cost"]):
-                refusal_msg = "I could not find pricing information in the indexed website content."
-            else:
-                refusal_msg = "Information not found in the indexed website content."
-        elif refusal_case == "Case B":
-            refusal_msg = "The requested information may exist on the website, but the relevant page was not indexed. Try increasing the crawl depth and analyze again."
-        else: # Case C
-            refusal_msg = "This question is unrelated to the indexed website."
+        if any(kw in question.lower() for kw in ["price", "pricing", "cost"]):
+            refusal_msg = "I could not find pricing information in the indexed website content."
+        else:
+            if not refusal_case:
+                refusal_case = "Case A"
+                
+            if refusal_case in ("Case A", "Case B"):
+                refusal_msg = "The requested information may exist on this website, but the relevant page was not indexed.\n\nPlease increase crawl depth and analyze again."
+            else: # Case C
+                refusal_msg = "This question is unrelated to the indexed website.\n\nI can only answer questions using the content available in the analyzed website."
 
         return _build_refusal_response(
             refusal_msg,

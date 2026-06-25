@@ -35,6 +35,21 @@ def is_conversational_followup(query: str, chat_history: list[dict] | None) -> b
     return False
 
 
+def find_anchor_query(chat_history: list[dict]) -> str:
+    """Find the last standalone (non-follow-up) user query in the history."""
+    user_msgs = [m for m in chat_history if m.get("role") == "user"]
+    if not user_msgs:
+        return ""
+        
+    for i in range(len(user_msgs) - 1, -1, -1):
+        prior_history = user_msgs[:i]
+        curr_msg = user_msgs[i].get("content", "").strip()
+        if not is_conversational_followup(curr_msg, prior_history):
+            return curr_msg
+            
+    return user_msgs[0].get("content", "").strip()
+
+
 def simple_search(
     query: str,
     faiss_store: FAISSStore,
@@ -51,17 +66,13 @@ def simple_search(
     expanded_queries = []
     
     if chat_history and is_conversational_followup(query, chat_history):
-        last_user_query = ""
-        for msg in reversed(chat_history):
-            if msg.get("role") == "user":
-                last_user_query = msg.get("content", "").strip()
-                break
-        if last_user_query:
-            # Combine previous context and current question
-            search_query = f"{last_user_query} {query}"
+        anchor_query = find_anchor_query(chat_history)
+        if anchor_query:
+            # Combine the main topic anchor and current follow-up question
+            search_query = f"{anchor_query} {query}"
             expanded = True
             expanded_queries = [search_query]
-            logger.info(f"Query expanded for follow-up search: '{query}' -> '{search_query}'")
+            logger.info(f"Query expanded with anchor: '{query}' -> '{search_query}' (anchor: '{anchor_query}')")
 
     query_emb = embed_fn(search_query)
     

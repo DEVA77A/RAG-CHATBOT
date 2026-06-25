@@ -70,6 +70,15 @@ TEST_CASES = [
         "questions": [
             "Players"
         ]
+    },
+    {
+        "name": "Greetings",
+        "url": "https://react.dev/",
+        "questions": [
+            "Hi",
+            "Hello",
+            "Thanks"
+        ]
     }
 ]
 
@@ -118,7 +127,8 @@ def run_suite():
                     "Information not found", 
                     "unrelated to the indexed website",
                     "could not find pricing information",
-                    "was not indexed"
+                    "was not indexed",
+                    "How can I help you understand"
                 ])
                 
                 if is_refusal:
