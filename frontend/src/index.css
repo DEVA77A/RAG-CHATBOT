@@ -284,6 +284,12 @@ body {
   gap: 14px;
 }
 
+.index-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .card h3,
 .sources-list-container h3,
 .history-section h3 {

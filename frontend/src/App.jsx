@@ -348,14 +348,40 @@ function App() {
         </div>
 
         <div className="sidebar-content">
-          <div className="new-chat-container">
-            <button className="btn-primary w-full" onClick={startNewChat}>
-              + New Chat
-            </button>
-          </div>
-
           <div className="card">
-            <h3>Knowledge Base</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <h3 style={{ margin: 0 }}>Knowledge Base</h3>
+              {analysisId && (
+                <button 
+                  onClick={startNewChat} 
+                  style={{ 
+                    background: 'transparent', 
+                    border: 'none', 
+                    color: 'var(--text-muted)', 
+                    cursor: 'pointer', 
+                    fontSize: '11px', 
+                    fontWeight: '600', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '4px',
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseOver={(e) => {
+                    e.currentTarget.style.color = 'var(--accent-light)';
+                    e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+                  }}
+                  onMouseOut={(e) => {
+                    e.currentTarget.style.color = 'var(--text-muted)';
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
+                  title="Clear current chat and return to home"
+                >
+                  Reset ↺
+                </button>
+              )}
+            </div>
             <form onSubmit={handleIndex} className="index-form">
               <div className="input-group">
                 <input
@@ -367,8 +393,8 @@ function App() {
                   required
                 />
               </div>
-              <div className="input-group inline">
-                <label>Max Pages:</label>
+              <div className="input-group">
+                <label>Max Pages</label>
                 <select
                   value={maxPages}
                   onChange={(e) => setMaxPages(parseInt(e.target.value, 10))}
@@ -389,7 +415,7 @@ function App() {
                 className="btn-primary"
                 disabled={status === 'crawling' || !url}
               >
-                {status === 'crawling' ? 'Crawling...' : 'Crawl & Index'}
+                {status === 'crawling' ? 'Crawling...' : '+ Crawl & New Chat'}
               </button>
             </form>
 
