@@ -39,8 +39,23 @@ function App() {
   const textareaRef = useRef(null);
 
   // Sidebar open/close states
-  const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
-  const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(() => window.innerWidth > 1024);
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(() => window.innerWidth > 1024);
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 1024);
+
+  // Responsive: auto-collapse sidebars on resize
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth <= 1024;
+      setIsMobile(mobile);
+      if (mobile) {
+        setLeftSidebarOpen(false);
+        setRightSidebarOpen(false);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Scroll to bottom when messages update
   const scrollToBottom = () => {
@@ -347,6 +362,10 @@ function App() {
 
   return (
     <div className="app-container">
+      {/* Mobile sidebar overlay backdrop */}
+      {isMobile && (leftSidebarOpen || rightSidebarOpen) && (
+        <div className="sidebar-overlay" onClick={() => { setLeftSidebarOpen(false); setRightSidebarOpen(false); }} />
+      )}
       {/* ─── LEFT SIDEBAR ─── */}
       <aside className={`sidebar ${leftSidebarOpen ? 'open' : 'collapsed'}`}>
         <div className="sidebar-header">
@@ -443,7 +462,7 @@ function App() {
               />
               <div className="history-list">
                 {filteredHistory.map(h => (
-                  <div key={h.id} className={`history-item ${h.id === analysisId ? 'active' : ''}`} onClick={() => loadSession(h.id)}>
+                  <div key={h.id} className={`history-item ${h.id === analysisId ? 'active' : ''}`} onClick={() => { loadSession(h.id); if (isMobile) setLeftSidebarOpen(false); }}>
                     <div className="history-item-body">
                       <div className="history-title">{h.title || h.domain || h.url}</div>
                       <div className="history-time">{formatDate(h.created_at)}</div>
