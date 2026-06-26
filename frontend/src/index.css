@@ -449,6 +449,25 @@ select:focus {
   opacity: 0.8;
 }
 
+.sidebar-search-input {
+  width: 100%;
+  padding: 8px 12px;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+  outline: none;
+  font-family: var(--font-sans);
+  transition: all 0.2s ease;
+}
+
+.sidebar-search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
 /* History List (Previous Chats) */
 .history-section {
   display: flex;

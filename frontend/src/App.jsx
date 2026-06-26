@@ -25,6 +25,10 @@ function App() {
   // History Data
   const [historyList, setHistoryList] = useState([]);
 
+  // Search Filters
+  const [historySearchQuery, setHistorySearchQuery] = useState('');
+  const [sourceSearchQuery, setSourceSearchQuery] = useState('');
+
   // Debug Data
   const [debugData, setDebugData] = useState(null);
   const [showDebug, setShowDebug] = useState(false);
@@ -324,6 +328,23 @@ function App() {
     }));
   };
 
+  const filteredHistory = historyList.filter(h => {
+    const q = historySearchQuery.toLowerCase();
+    return (
+      (h.title && h.title.toLowerCase().includes(q)) ||
+      (h.domain && h.domain.toLowerCase().includes(q)) ||
+      (h.url && h.url.toLowerCase().includes(q))
+    );
+  });
+
+  const filteredSources = indexedPages.filter(page => {
+    const q = sourceSearchQuery.toLowerCase();
+    return (
+      (page.title && page.title.toLowerCase().includes(q)) ||
+      (page.url && page.url.toLowerCase().includes(q))
+    );
+  });
+
   return (
     <div className="app-container">
       {/* ─── LEFT SIDEBAR ─── */}
@@ -413,8 +434,15 @@ function App() {
           {historyList.length > 0 && (
             <div className="history-section mt-4">
               <h3>Previous Chats</h3>
+              <input 
+                type="text" 
+                placeholder="Search chats..." 
+                value={historySearchQuery} 
+                onChange={(e) => setHistorySearchQuery(e.target.value)} 
+                className="sidebar-search-input"
+              />
               <div className="history-list">
-                {historyList.map(h => (
+                {filteredHistory.map(h => (
                   <div key={h.id} className={`history-item ${h.id === analysisId ? 'active' : ''}`} onClick={() => loadSession(h.id)}>
                     <div className="history-item-body">
                       <div className="history-title">{h.title || h.domain || h.url}</div>
@@ -504,8 +532,7 @@ function App() {
               <div className="empty-logo-center">
                 <img src="/logo.jpg" alt="RAG X Logo" />
               </div>
-              <h2>Retrieval-Augmented Generation</h2>
-              <p>Enter a URL in the sidebar to build a knowledge base, then ask questions grounded in that context.</p>
+              <h2>Welcome to RAG X</h2>
             </div>
           ) : (
             <div className="messages-wrapper">
@@ -610,10 +637,22 @@ function App() {
           <h3>Indexed Sources</h3>
           {indexedPages.length > 0 && <span className="badge-small-red">{indexedPages.length} files</span>}
         </div>
+        {indexedPages.length > 0 && (
+          <div className="right-sidebar-search" style={{ padding: '0 20px 12px 20px', borderBottom: '1px solid var(--border)' }}>
+            <input 
+              type="text" 
+              placeholder="Search pages..." 
+              value={sourceSearchQuery} 
+              onChange={(e) => setSourceSearchQuery(e.target.value)} 
+              className="sidebar-search-input"
+              style={{ marginBottom: 0 }}
+            />
+          </div>
+        )}
         <div className="right-sidebar-content">
-          {indexedPages.length > 0 ? (
+          {filteredSources.length > 0 ? (
             <ul className="sources-list">
-              {indexedPages.map((page, idx) => (
+              {filteredSources.map((page, idx) => (
                 <li key={idx} title={page.url}>
                   <div className="source-title">{page.title || page.url.split('/').pop() || page.url}</div>
                   <div className="source-meta">
@@ -626,7 +665,13 @@ function App() {
           ) : (
             <div className="empty-sources-placeholder">
               <div className="placeholder-icon">📂</div>
-              <p>{status === 'crawling' ? 'Crawling pages...' : 'No indexed sources. Crawl a website in the sidebar to populate.'}</p>
+              <p>
+                {status === 'crawling' 
+                  ? 'Crawling pages...' 
+                  : indexedPages.length > 0 
+                    ? 'No matching pages found.' 
+                    : 'No indexed sources. Crawl a website in the sidebar to populate.'}
+              </p>
             </div>
           )}
         </div>
