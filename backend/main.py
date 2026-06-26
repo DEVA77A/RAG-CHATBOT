@@ -7,6 +7,14 @@ WebIntel AI — FastAPI Application (Pure RAG)
   GET  /api/health     — Health check
 """
 
+import os
+# Force 1 thread for libraries to prevent memory spikes in containers
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 import json
 import logging
 import uuid
