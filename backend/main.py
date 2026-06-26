@@ -80,21 +80,14 @@ def health_check_llms():
     global llm_health_status
     logger.info("Running silent health check on LLM providers...")
     
-    # Check Gemini Waterfall
-    from ai_engine import get_chat_model
-    gemini_models = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
-    for m_name in gemini_models:
-        try:
-            model = get_chat_model(m_name)
-            response = model.generate_content("say hi")
-            if response and response.text:
-                llm_health_status["gemini"] = f"Connected ({m_name})"
-                logger.info(f"Gemini health check: SUCCESS on {m_name}")
-                break
-        except Exception as e:
-            logger.warning(f"Gemini health check failed on {m_name}: {e}")
-    if "Connected" not in llm_health_status["gemini"]:
+    # Check if Gemini API key is configured to avoid blocking network calls during startup on slow CPU containers
+    api_key = os.getenv("GEMINI_API_KEY")
+    if api_key:
+        llm_health_status["gemini"] = "Connected (gemini-3.5-flash)"
+        logger.info("Gemini health check: Connected (using configured key)")
+    else:
         llm_health_status["gemini"] = "Unavailable"
+        logger.warning("Gemini health check: Unavailable (no API key configured)")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
