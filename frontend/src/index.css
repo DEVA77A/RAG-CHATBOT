@@ -161,6 +161,7 @@ body {
   filter: brightness(1.15) contrast(1.1);
   /* merges/enhances details */
   display: block;
+  transform: scale(1.75);
 }
 
 .logo-info {
@@ -669,8 +670,8 @@ select:focus {
 }
 
 .empty-logo-center {
-  width: 76px;
-  height: 76px;
+  width: 130px;
+  height: 130px;
   border-radius: 50%;
   overflow: hidden;
   display: flex;
@@ -688,6 +689,7 @@ select:focus {
   object-fit: cover;
   border-radius: 50%;
   display: block;
+  transform: scale(1.75);
 }
 
 @keyframes pulse-glow-filter {
@@ -703,9 +705,13 @@ select:focus {
 }
 
 .empty-state h2 {
-  font-size: 1.25rem;
+  font-size: 2.2rem;
   font-weight: 700;
   color: var(--text-primary);
+}
+
+.welcome-x {
+  color: var(--accent);
 }
 
 .empty-state p {
@@ -751,6 +757,7 @@ select:focus {
   flex-shrink: 0;
   user-select: none;
   font-family: var(--font-sans);
+  overflow: hidden;
 }
 
 .avatar img {
@@ -760,6 +767,7 @@ select:focus {
   border-radius: 50%;
   filter: brightness(1.1) contrast(1.1);
   display: block;
+  transform: scale(1.75);
 }
 
 .message-row.user .avatar {

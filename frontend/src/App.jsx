@@ -532,7 +532,7 @@ function App() {
               <div className="empty-logo-center">
                 <img src="/logo.jpg" alt="RAG X Logo" />
               </div>
-              <h2>Welcome to RAG X</h2>
+              <h2>Welcome to RAG <span className="welcome-x">X</span></h2>
             </div>
           ) : (
             <div className="messages-wrapper">
