@@ -4,18 +4,18 @@
 
 :root {
   /* Colors */
-  --bg-main: #050506;
-  /* Deep absolute black */
-  --bg-sidebar: #09090b;
-  /* Dark flat gray/black */
-  --bg-card: #0c0c0e;
-  /* Card containers and AI message bubbles */
-  --bg-input: #121215;
-  /* Inputs, selects, and text fields */
-  --border: #16161b;
-  /* Subtle boundary separators */
-  --border-light: #222228;
-  /* Slightly lighter border for hover/focus */
+  --bg-main: #18181b;
+  /* Premium charcoal main background */
+  --bg-sidebar: #111113;
+  /* Deep dark slate for sidebar contrast */
+  --bg-card: #27272a;
+  /* Zinc-800 for card containers and AI bubbles */
+  --bg-input: #1e1e21;
+  /* Lighter charcoal for inputs, selects, and text fields */
+  --border: #2d2d34;
+  /* Subtle gray border */
+  --border-light: #3f3f46;
+  /* Hover/focus borders */
 
   /* Accents */
   --accent: #dc2626;
