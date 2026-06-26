@@ -14,18 +14,20 @@ Model specs:
 """
 
 import os
-# Force 1 thread for libraries to prevent memory spikes in containers
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
+# Force 1 thread for libraries to prevent memory spikes in containers on Render
+if os.environ.get("RENDER"):
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 import logging
 import re
 import numpy as np
 import torch
-torch.set_num_threads(1)
+if os.environ.get("RENDER"):
+    torch.set_num_threads(1)
 from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
@@ -272,11 +274,12 @@ def embed_texts(texts: list[str]) -> np.ndarray:
         return np.array([], dtype=np.float32).reshape(0, EMBEDDING_DIM)
 
     model = get_model()
+    batch_size = 16 if os.environ.get("RENDER") else 64
     embeddings = model.encode(
         texts,
         normalize_embeddings=True,
         show_progress_bar=False,
-        batch_size=16  # Smaller batch size to prevent OOM on Render Free Tier
+        batch_size=batch_size
     )
     return np.array(embeddings, dtype=np.float32)
 
