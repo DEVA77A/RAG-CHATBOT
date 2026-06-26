@@ -28,7 +28,7 @@ function App() {
   // Debug Data
   const [debugData, setDebugData] = useState(null);
   const [showDebug, setShowDebug] = useState(false);
-  const [llmHealth, setLlmHealth] = useState({claude: "Checking...", gemini: "Checking..."});
+  const [llmHealth, setLlmHealth] = useState({ gemini: "Checking..." });
   const [showDocRec, setShowDocRec] = useState(false);
 
   const messagesEndRef = useRef(null);
@@ -60,10 +60,15 @@ function App() {
     }
   }, [url]);
 
-  // Load history list and health on mount
+  // Load history list, health, and restore active session on mount
   useEffect(() => {
     fetchHistoryList();
     fetchLlmHealth();
+
+    const savedAnalysisId = localStorage.getItem('active_analysis_id');
+    if (savedAnalysisId) {
+      loadSession(savedAnalysisId);
+    }
   }, []);
 
   const fetchLlmHealth = async () => {
@@ -98,7 +103,7 @@ function App() {
     const hasTimezone = /Z$|[+-]\d{2}:\d{2}$/.test(formattedStr);
     const date = new Date(hasTimezone ? formattedStr : formattedStr + "Z");
     if (isNaN(date.getTime())) return isoString;
-    
+
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
@@ -114,6 +119,7 @@ function App() {
   };
 
   const startNewChat = () => {
+    localStorage.removeItem('active_analysis_id');
     setAnalysisId(null);
     setKbStats(null);
     setIndexedPages([]);
@@ -125,9 +131,32 @@ function App() {
     setChatMetrics(null);
   };
 
+  const deleteSession = async (id, event) => {
+    event.stopPropagation(); // prevent loading the session when clicking delete
+    if (!window.confirm("Are you sure you want to delete this chat session and its vector index? This cannot be undone.")) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/analyze/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        if (analysisId === id) {
+          localStorage.removeItem('active_analysis_id');
+          startNewChat();
+        }
+        fetchHistoryList();
+      } else {
+        alert("Failed to delete the session.");
+      }
+    } catch (e) {
+      console.error("Error deleting session", e);
+      alert("Error deleting session: " + e.message);
+    }
+  };
+
   const loadSession = async (id) => {
     try {
       setStatus('crawling'); // reuse loading state
+      localStorage.setItem('active_analysis_id', id);
       const [analysisRes, chatRes] = await Promise.all([
         fetch(`/api/analyze/${id}`),
         fetch(`/api/chat/${id}`)
@@ -198,6 +227,7 @@ function App() {
       }
 
       setAnalysisId(data.id);
+      localStorage.setItem('active_analysis_id', data.id);
       setKbStats(data.kb_stats);
       setIndexedPages(data.indexed_pages || []);
       setDomain(data.domain || url);
@@ -309,14 +339,10 @@ function App() {
             </div>
           </div>
         </div>
-          
+
         <div className="llm-health-status">
           <div className="health-row">
-            <span className={`status-dot ${llmHealth.claude === 'Connected' ? 'online' : 'offline'}`}></span>
-            <span className="health-name">Claude Haiku — {llmHealth.claude}</span>
-          </div>
-          <div className="health-row">
-            <span className={`status-dot ${llmHealth.gemini.includes('Connected') ? 'online' : 'offline'}`}></span>
+            <span className={`status-dot ${llmHealth.gemini?.includes('Connected') ? 'online' : 'offline'}`}></span>
             <span className="health-name">Gemini — {llmHealth.gemini}</span>
           </div>
         </div>
@@ -390,8 +416,13 @@ function App() {
               <div className="history-list">
                 {historyList.map(h => (
                   <div key={h.id} className={`history-item ${h.id === analysisId ? 'active' : ''}`} onClick={() => loadSession(h.id)}>
-                    <div className="history-title">{h.title || h.domain || h.url}</div>
-                    <div className="history-time">{formatDate(h.created_at)}</div>
+                    <div className="history-item-body">
+                      <div className="history-title">{h.title || h.domain || h.url}</div>
+                      <div className="history-time">{formatDate(h.created_at)}</div>
+                    </div>
+                    <button className="btn-delete-history" onClick={(e) => deleteSession(h.id, e)} title="Delete session">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                    </button>
                   </div>
                 ))}
               </div>
@@ -404,8 +435,8 @@ function App() {
       <main className="main-panel">
         <div className="top-nav flex-between">
           <div className="top-nav-left">
-            <button 
-              className="sidebar-toggle-btn left-toggle" 
+            <button
+              className="sidebar-toggle-btn left-toggle"
               onClick={() => setLeftSidebarOpen(!leftSidebarOpen)}
               title={leftSidebarOpen ? "Collapse Left Sidebar" : "Expand Left Sidebar"}
             >
@@ -417,12 +448,41 @@ function App() {
                 )}
               </svg>
             </button>
-            <h3>{domain ? `Chatting with ${domain}` : 'Waiting for context...'}</h3>
+            <h3>
+              {domain ? (
+                <>
+                  Chatting with {domain}
+                  {url && (
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="nav-scraped-link"
+                      style={{
+                        marginLeft: '12px',
+                        fontSize: '0.8rem',
+                        fontWeight: '600',
+                        color: 'var(--accent-light)',
+                        textDecoration: 'none',
+                        borderBottom: '1px dashed var(--accent)',
+                        paddingBottom: '2px',
+                        transition: 'opacity 0.2s',
+                      }}
+                      onMouseOver={(e) => e.target.style.opacity = 0.8}
+                      onMouseOut={(e) => e.target.style.opacity = 1}
+                      title={`Visit scraped site: ${url}`}
+                    >
+                      Visit Site ↗
+                    </a>
+                  )}
+                </>
+              ) : 'Waiting for context...'}
+            </h3>
           </div>
-          
+
           <div className="top-nav-right">
-            <button 
-              className="sidebar-toggle-btn right-toggle" 
+            <button
+              className="sidebar-toggle-btn right-toggle"
               onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
               title={rightSidebarOpen ? "Collapse Sources Panel" : "Expand Sources Panel"}
             >
@@ -465,7 +525,14 @@ function App() {
                               {msg.debug["Cache Hit"] && <span style={{ color: '#3b82f6', marginLeft: '6px' }}>(CACHED)</span>}
                             </div>
                           )}
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              a: ({ node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />
+                            }}
+                          >
+                            {msg.content}
+                          </ReactMarkdown>
                         </>
                       ) : (
                         msg.content
@@ -479,9 +546,9 @@ function App() {
                         <div className="citation-chips">
                           {msg.sources.map((s, i) => (
                             <div key={i} className="citation-chip">
-                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                {`[${s.source_title || 'Unknown Page'}](${s.source_url})`}
-                              </ReactMarkdown>
+                              <a href={s.source_url} target="_blank" rel="noopener noreferrer">
+                                {s.source_title || 'Unknown Page'}
+                              </a>
                             </div>
                           ))}
                         </div>

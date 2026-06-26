@@ -208,6 +208,14 @@ async def get_all_analyses() -> list[dict]:
             return [dict(row) for row in rows]
 
 
+async def delete_analysis(analysis_id: str):
+    """Delete an analysis and its chat messages."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("DELETE FROM chat_messages WHERE analysis_id = ?", (analysis_id,))
+        await db.execute("DELETE FROM analyses WHERE id = ?", (analysis_id,))
+        await db.commit()
+
+
 # ──────────────────────────────────────────────
 # Chat CRUD
 # ──────────────────────────────────────────────

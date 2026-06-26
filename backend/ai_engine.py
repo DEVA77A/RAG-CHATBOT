@@ -303,29 +303,6 @@ async def rag_chat(
         if not answer:
             debug_info["Fallback Activated"] = True
 
-    # Provider 2: Claude Haiku
-    if not answer:
-        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-        if anthropic_key:
-            try:
-                import anthropic
-                from anthropic import RateLimitError
-                client = anthropic.Anthropic(api_key=anthropic_key)
-                message = client.messages.create(
-                    model="claude-3-5-haiku-20241022",
-                    max_tokens=1000,
-                    system="You are a strict RAG assistant.",
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                answer = message.content[0].text.strip()
-                debug_info["LLM Provider"] = "Claude Haiku"
-                debug_info["Response Source"] = "Cloud"
-            except RateLimitError as e:
-                logger.error(f"Claude Rate Limit error: {e}")
-            except Exception as e:
-                logger.error(f"Claude error: {e}")
-        else:
-            logger.warning("No Anthropic API Key found, skipping Claude fallback.")
 
     # Provider 3: Semantic Cache
     if not answer and question_embedding is not None and len(question_embedding) > 0:
@@ -452,37 +429,17 @@ async def rag_chat(
             md_link = f"[Source: {source_title}]({source_url})"
             answer = answer.replace(target_str, md_link)
 
-    # Build and append Source Cards to the end of the answer
-    source_cards = []
+    # Build and append simple source links to the end of the answer
+    source_links = []
+    seen_urls = set()
     for s in sources:
-        score = s.get("score", 0.0)
-        if score >= 0.7:
-            conf = "High"
-        elif score >= 0.45:
-            conf = "Medium"
-        else:
-            conf = "Low"
+        s_url = s["source_url"]
+        if s_url not in seen_urls:
+            seen_urls.add(s_url)
+            source_links.append(f"- [{s['source_title']}]({s_url})")
             
-        section_heading = "Main Section"
-        for fc in filtered_chunks:
-            if fc.get("metadata", {}).get("chunk_id", -1) == s["chunk_id"]:
-                section_heading = fc.get("metadata", {}).get("heading") or "Main Section"
-                break
-        if not section_heading.strip():
-            section_heading = "Main Section"
-
-        card = (
-            f"📄 **Page Title**: {s['source_title']}\n"
-            f"📂 **Section**: {section_heading}\n"
-            f"🌐 **Original URL**: {s['source_url']}\n"
-            f"🎯 **Confidence**: {conf}\n"
-            f"📊 **Similarity**: {score:.2f}\n"
-            f"🧩 **Chunk IDs Used**: {s['chunk_id']}"
-        )
-        source_cards.append(card)
-
-    if source_cards:
-        answer += "\n\n---\n\n### Source Cards\n\n" + "\n\n---\n\n".join(source_cards)
+    if source_links:
+        answer += "\n\n---\n**Sources:**\n" + "\n".join(source_links)
 
     # Token count
     try:

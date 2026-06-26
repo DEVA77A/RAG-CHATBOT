@@ -42,6 +42,7 @@ from database import (
     save_chat_message,
     get_chat_history,
     get_all_analyses,
+    delete_analysis,
 )
 from scraper import crawl_website
 from chunker import chunk_text_with_metadata, embed_texts, embed_query
@@ -64,7 +65,7 @@ logger = logging.getLogger("webintel")
 # App Lifecycle
 # ──────────────────────────────────────────────
 
-llm_health_status = {"claude": "Unavailable", "gemini": "Unavailable"}
+llm_health_status = {"gemini": "Unavailable"}
 
 def health_check_llms():
     global llm_health_status
@@ -86,34 +87,14 @@ def health_check_llms():
     if "Connected" not in llm_health_status["gemini"]:
         llm_health_status["gemini"] = "Unavailable"
 
-    # Check Claude
-    try:
-        import os
-        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-        if anthropic_key:
-            import anthropic
-            client = anthropic.Anthropic(api_key=anthropic_key)
-            message = client.messages.create(
-                model="claude-3-5-haiku-20241022",
-                max_tokens=10,
-                messages=[{"role": "user", "content": "say hi"}]
-            )
-            if message and message.content:
-                llm_health_status["claude"] = "Connected"
-                logger.info("Claude health check: SUCCESS")
-        else:
-            logger.error("Claude health check failed: Missing ANTHROPIC_API_KEY")
-    except Exception as e:
-        llm_health_status["claude"] = "Unavailable"
-        logger.error(f"Claude health check failed: {e}")
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize database on startup."""
     logger.info("Starting WebIntel AI v2.0 (Pure RAG)...")
     await init_db()
     logger.info("Database initialized")
-    health_check_llms()
+    import asyncio
+    asyncio.create_task(asyncio.to_thread(health_check_llms))
     yield
     logger.info("Shutting down WebIntel AI")
 
@@ -537,14 +518,43 @@ async def get_analyze_endpoint(analysis_id: str):
         id=data["id"],
         url=data["url"],
         status=data["status"],
-        title=data.get("title", ""),
-        domain=data.get("domain", ""),
+        title=data.get("title") or "",
+        domain=data.get("domain") or "",
         indexed_pages=scraped.get("pages", []),
         kb_stats=scraped.get("stats", {"total_pages": 0, "total_chunks": 0, "total_chars": 0}),
-        crawl_time=data.get("crawl_time", 0.0),
-        index_time=data.get("index_time", 0.0),
-        total_time=data.get("total_time", 0.0),
+        crawl_time=data.get("crawl_time") or 0.0,
+        index_time=data.get("index_time") or 0.0,
+        total_time=data.get("total_time") or 0.0,
     )
+
+
+# ──────────────────────────────────────────────
+# DELETE /api/analyze/{analysis_id} — Delete analysis and data
+# ──────────────────────────────────────────────
+
+@app.delete("/api/analyze/{analysis_id}")
+async def delete_analyze_endpoint(analysis_id: str):
+    """Delete an analysis, its vector store, and its chat history."""
+    record = await get_analysis(analysis_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+        
+    await delete_analysis(analysis_id)
+    
+    # Delete FAISS files
+    from vector_store import FAISS_DIR
+    base_path = os.path.join(FAISS_DIR, analysis_id)
+    index_path = f"{base_path}.index"
+    json_path = f"{base_path}.json"
+    
+    for path in (index_path, json_path):
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception as e:
+            logger.error(f"Failed to delete file {path}: {e}")
+            
+    return {"status": "success", "message": f"Analysis {analysis_id} deleted successfully"}
 
 
 # ──────────────────────────────────────────────

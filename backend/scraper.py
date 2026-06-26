@@ -169,8 +169,27 @@ async def scrape_url(url: str) -> dict:
     return result
 
 
+import requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+def _fetch_html_sync(url: str, headers: dict) -> str | None:
+    try:
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=7.0,
+            verify=False,
+            allow_redirects=True
+        )
+        response.raise_for_status()
+        return response.text
+    except Exception as e:
+        logger.error(f"Fetch failed for {url}: {e}")
+        return None
+
 async def _fetch_html(url: str) -> str | None:
-    """Fetch raw HTML from a URL with timeout and headers."""
+    """Fetch raw HTML from a URL with timeout and headers using requests in a thread."""
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -180,22 +199,7 @@ async def _fetch_html(url: str) -> str | None:
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     }
-
-    try:
-        async with httpx.AsyncClient(
-            follow_redirects=True,
-            timeout=7.0,
-            verify=False  # Some sites have cert issues; acceptable for a hackathon
-        ) as client:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            return response.text
-    except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP {e.response.status_code} for {url}")
-        return None
-    except Exception as e:
-        logger.error(f"Fetch failed for {url}: {e}")
-        return None
+    return await asyncio.to_thread(_fetch_html_sync, url, headers)
 
 
 def _extract_title(soup: BeautifulSoup, url: str) -> str:
