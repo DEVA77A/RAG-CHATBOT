@@ -161,7 +161,6 @@ body {
   filter: brightness(1.15) contrast(1.1);
   /* merges/enhances details */
   display: block;
-  transform: scale(1.75);
 }
 
 .logo-info {
@@ -689,7 +688,6 @@ select:focus {
   object-fit: cover;
   border-radius: 50%;
   display: block;
-  transform: scale(1.75);
 }
 
 @keyframes pulse-glow-filter {
@@ -757,7 +755,6 @@ select:focus {
   flex-shrink: 0;
   user-select: none;
   font-family: var(--font-sans);
-  overflow: hidden;
 }
 
 .avatar img {
@@ -767,7 +764,6 @@ select:focus {
   border-radius: 50%;
   filter: brightness(1.1) contrast(1.1);
   display: block;
-  transform: scale(1.75);
 }
 
 .message-row.user .avatar {
