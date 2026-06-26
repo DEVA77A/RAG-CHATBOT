@@ -6,8 +6,8 @@
   /* Colors */
   --bg-main: #18181b;
   /* Premium charcoal main background */
-  --bg-sidebar: #111113;
-  /* Deep dark slate for sidebar contrast */
+  --bg-sidebar: #18181b;
+  /* Matching gray for right and left sidebars */
   --bg-card: #27272a;
   /* Zinc-800 for card containers and AI bubbles */
   --bg-input: #1e1e21;
@@ -60,7 +60,7 @@ body {
   background-color: var(--bg-main);
   color: var(--text-secondary);
   line-height: 1.6;
-  font-size: 15px;
+  font-size: 16px;
   /* Increased base font size for clearer text */
   height: 100vh;
   overflow: hidden;
@@ -221,7 +221,7 @@ body {
 }
 
 .health-name {
-  font-size: 0.78rem;
+  font-size: 0.85rem;
   font-weight: 500;
   color: var(--text-secondary);
 }
@@ -293,11 +293,11 @@ body {
 .card h3,
 .sources-list-container h3,
 .history-section h3 {
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 1.2px;
   margin-bottom: 8px;
   display: block;
 }
@@ -315,7 +315,7 @@ body {
 }
 
 .input-group label {
-  font-size: 0.78rem;
+  font-size: 0.85rem;
   font-weight: 600;
   color: var(--text-secondary);
 }
@@ -328,7 +328,7 @@ select {
   border: 1px solid var(--border);
   color: var(--text-primary);
   border-radius: 8px;
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   /* Increased size */
   outline: none;
   font-family: var(--font-sans);
@@ -412,7 +412,7 @@ select:focus {
 }
 
 .source-title {
-  font-size: 0.78rem;
+  font-size: 0.85rem;
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 2px;
@@ -432,14 +432,14 @@ select:focus {
   color: var(--text-secondary);
   padding: 1px 6px;
   border-radius: 4px;
-  font-size: 0.65rem;
+  font-size: 0.72rem;
   font-weight: 600;
 }
 
 .source-link {
   color: var(--accent-light);
   text-decoration: none;
-  font-size: 0.72rem;
+  font-size: 0.8rem;
   font-weight: 600;
   transition: opacity 0.15s;
 }
@@ -517,7 +517,7 @@ select:focus {
 }
 
 .history-title {
-  font-size: 0.82rem;
+  font-size: 0.9rem;
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
@@ -526,7 +526,7 @@ select:focus {
 }
 
 .history-time {
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
 }
 
@@ -1118,11 +1118,11 @@ select:focus {
 }
 
 .right-sidebar-header h3 {
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 1.2px;
 }
 
 .right-sidebar-content {
@@ -1140,7 +1140,7 @@ select:focus {
   border: 1px solid rgba(220, 38, 38, 0.2);
   padding: 2px 6px;
   border-radius: 4px;
-  font-size: 0.65rem;
+  font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -1164,10 +1164,6 @@ select:focus {
 }
 
 .empty-sources-placeholder p {
-  font-size: 0.82rem;
+  font-size: 0.88rem;
   line-height: 1.5;
-}
-
-font-size: 0.82rem;
-line-height: 1.5;
 }
