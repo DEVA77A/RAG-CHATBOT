@@ -599,7 +599,25 @@ async def health_check():
 # Serve React static files in production if dist exists
 frontend_dist_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
 if os.path.exists(frontend_dist_path):
-    app.mount("/", StaticFiles(directory=frontend_dist_path, html=True), name="frontend")
+    from fastapi.responses import FileResponse
+    
+    @app.get("/", include_in_schema=False)
+    async def serve_index():
+        response = FileResponse(os.path.join(frontend_dist_path, "index.html"))
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+    @app.get("/index.html", include_in_schema=False)
+    async def serve_index_html():
+        response = FileResponse(os.path.join(frontend_dist_path, "index.html"))
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+    app.mount("/", StaticFiles(directory=frontend_dist_path), name="frontend")
 else:
     @app.get("/", include_in_schema=False)
     async def root():
