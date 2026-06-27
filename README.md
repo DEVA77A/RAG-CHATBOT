@@ -1,3 +1,13 @@
+---
+title: RAG-X
+emoji: 🧠
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # WebIntel AI — Personalized Website Intelligence Assistant
 
 <div align="center">
