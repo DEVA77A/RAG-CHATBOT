@@ -9,7 +9,7 @@ WebIntel AI — FastAPI Application (Pure RAG)
 
 import os
 # Force 1 thread for libraries to prevent memory spikes in containers on Render
-if os.environ.get("RENDER"):
+if os.environ.get("RENDER") or os.environ.get("SPACE_ID"):
     os.environ["OMP_NUM_THREADS"] = "1"
     os.environ["MKL_NUM_THREADS"] = "1"
     os.environ["OPENBLAS_NUM_THREADS"] = "1"

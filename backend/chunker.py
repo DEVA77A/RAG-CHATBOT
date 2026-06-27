@@ -14,8 +14,8 @@ Model specs:
 """
 
 import os
-# Force 1 thread for libraries to prevent memory spikes in containers on Render
-if os.environ.get("RENDER"):
+# Force 1 thread for libraries to prevent memory spikes in containers on Render/HuggingFace
+if os.environ.get("RENDER") or os.environ.get("SPACE_ID"):
     os.environ["OMP_NUM_THREADS"] = "1"
     os.environ["MKL_NUM_THREADS"] = "1"
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -26,7 +26,7 @@ import logging
 import re
 import numpy as np
 import torch
-if os.environ.get("RENDER"):
+if os.environ.get("RENDER") or os.environ.get("SPACE_ID"):
     torch.set_num_threads(1)
 from sentence_transformers import SentenceTransformer
 
