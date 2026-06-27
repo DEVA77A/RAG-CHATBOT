@@ -215,9 +215,8 @@ function App() {
       setStatus('ready');
       setChatMetrics(null);
     } catch (err) {
-      console.error(err);
-      setStatus('error');
-      setErrorMessage("Could not load session.");
+      console.error("Failed to load saved session. Starting new chat.", err);
+      startNewChat();
     }
   };
 
