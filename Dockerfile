@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Create a non-root user for Hugging Face compatibility
 RUN useradd -m -u 1000 user
+RUN mkdir -p /home/user/app/data && chown -R user:user /home/user
 WORKDIR /home/user/app
 
 # Copy requirement files and change ownership
