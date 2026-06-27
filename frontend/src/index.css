@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Mr+De+Haviland&display=swap');
+
 /* ──────────────────────────────────────────────
    RAG X - PREMIUM RED/BLACK THEME DESIGN SYSTEM
    ────────────────────────────────────────────── */
@@ -1817,5 +1819,47 @@ select:focus {
   ::-webkit-scrollbar {
     width: 3px;
     height: 3px;
+  }
+}
+
+/* Custom Additions by Deva */
+.logo-by-deva {
+  font-family: 'Mr De Haviland', cursive;
+  font-size: 2.3rem;
+  font-weight: 400;
+  color: var(--accent-light);
+  margin-top: 12px; /* One line space after RAG X */
+  line-height: 0.5;
+  letter-spacing: 0.5px;
+  display: block;
+}
+
+.empty-subtitle {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-top: -4px;
+  margin-bottom: 12px;
+}
+
+.empty-onboarding-card {
+  width: 100%;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  text-align: left;
+  animation: slide-up 0.4s ease;
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
   }
 }

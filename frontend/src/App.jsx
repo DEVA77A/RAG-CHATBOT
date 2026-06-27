@@ -2,6 +2,32 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+// Safe localStorage wrapper to prevent SecurityError crashes inside iframe environments (e.g. Hugging Face Spaces)
+const safeLocalStorage = {
+  getItem: (key) => {
+    try {
+      return localStorage.getItem(key);
+    } catch (e) {
+      console.warn("localStorage is not available:", e);
+      return null;
+    }
+  },
+  setItem: (key, value) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      console.warn("localStorage is not available:", e);
+    }
+  },
+  removeItem: (key) => {
+    try {
+      localStorage.removeItem(key);
+    } catch (e) {
+      console.warn("localStorage is not available:", e);
+    }
+  }
+};
+
 function App() {
   // Config & Status
   const [url, setUrl] = useState('');
@@ -84,7 +110,7 @@ function App() {
     fetchHistoryList();
     fetchLlmHealth();
 
-    const savedAnalysisId = localStorage.getItem('active_analysis_id');
+    const savedAnalysisId = safeLocalStorage.getItem('active_analysis_id');
     if (savedAnalysisId) {
       loadSession(savedAnalysisId);
     }
@@ -138,7 +164,7 @@ function App() {
   };
 
   const startNewChat = () => {
-    localStorage.removeItem('active_analysis_id');
+    safeLocalStorage.removeItem('active_analysis_id');
     setAnalysisId(null);
     setKbStats(null);
     setIndexedPages([]);
@@ -159,7 +185,7 @@ function App() {
       const res = await fetch(`/api/analyze/${id}`, { method: 'DELETE' });
       if (res.ok) {
         if (analysisId === id) {
-          localStorage.removeItem('active_analysis_id');
+          safeLocalStorage.removeItem('active_analysis_id');
           startNewChat();
         }
         fetchHistoryList();
@@ -175,7 +201,7 @@ function App() {
   const loadSession = async (id) => {
     try {
       setStatus('crawling'); // reuse loading state
-      localStorage.setItem('active_analysis_id', id);
+      safeLocalStorage.setItem('active_analysis_id', id);
       const [analysisRes, chatRes] = await Promise.all([
         fetch(`/api/analyze/${id}`),
         fetch(`/api/chat/${id}`)
@@ -245,7 +271,7 @@ function App() {
       }
 
       setAnalysisId(data.id);
-      localStorage.setItem('active_analysis_id', data.id);
+      safeLocalStorage.setItem('active_analysis_id', data.id);
       setKbStats(data.kb_stats);
       setIndexedPages(data.indexed_pages || []);
       setDomain(data.domain || url);
@@ -374,15 +400,8 @@ function App() {
             </div>
             <div className="logo-info">
               <h2>RAG <span className="logo-x">X</span></h2>
-              <span className="logo-version">Enterprise Alpha</span>
+              <div className="logo-by-deva">Deva</div>
             </div>
-          </div>
-        </div>
-
-        <div className="llm-health-status">
-          <div className="health-row">
-            <span className={`status-dot ${llmHealth.gemini?.includes('Connected') ? 'online' : 'offline'}`}></span>
-            <span className="health-name">Gemini — {llmHealth.gemini}</span>
           </div>
         </div>
 
@@ -551,6 +570,60 @@ function App() {
                 <img src="/logo.jpg" alt="RAG X Logo" />
               </div>
               <h2>Welcome to RAG <span className="welcome-x">X</span></h2>
+              <p className="empty-subtitle">Enter a website URL below to index and start chatting.</p>
+              
+              <div className="empty-onboarding-card">
+                <form onSubmit={handleIndex} className="index-form">
+                  <div className="input-group">
+                    <input
+                      type="url"
+                      placeholder="https://example.com"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                      disabled={status === 'crawling'}
+                      required
+                    />
+                  </div>
+                  <div className="input-group">
+                    <label style={{ fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '2px', textAlign: 'left' }}>Max Pages</label>
+                    <select
+                      value={maxPages}
+                      onChange={(e) => setMaxPages(parseInt(e.target.value, 10))}
+                      disabled={status === 'crawling'}
+                    >
+                      <option value={10}>10 (Standard)</option>
+                      <option value={25}>25 (Deep)</option>
+                      <option value={50}>50 (Full)</option>
+                    </select>
+                  </div>
+                  {showDocRec && (
+                    <div style={{ fontSize: '11px', color: '#10b981', marginTop: '-6px', marginBottom: '10px', fontWeight: '500', textAlign: 'left' }}>
+                      💡 Recommended: 25 or 50 pages for documentation!
+                    </div>
+                  )}
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={status === 'crawling' || !url}
+                  >
+                    {status === 'crawling' ? 'Crawling...' : 'Crawl & Index'}
+                  </button>
+                </form>
+
+                {status === 'crawling' && (
+                  <div className="progress-container" style={{ marginTop: '16px', justifyContent: 'center' }}>
+                    <div className="spinner-small"></div>
+                    <span>Crawling website in parallel...</span>
+                  </div>
+                )}
+
+                {status === 'error' && (
+                  <div className="error-alert" style={{ marginTop: '16px' }}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    {errorMessage}
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             <div className="messages-wrapper">
@@ -642,9 +715,7 @@ function App() {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
               </button>
             </div>
-            <div className="footer-text">
-              Strictly grounded in retrieved context. Hallucinations minimized.
-            </div>
+
           </form>
         </div>
       </main>
