@@ -1,12 +1,4 @@
----
-title: RAG-X
-emoji: 🧠
-colorFrom: blue
-colorTo: indigo
-sdk: docker
-app_port: 7860
-pinned: false
----
+
 
 # RAG-X — Production-Grade Pure RAG Chatbot
 
@@ -238,7 +230,7 @@ This project is configured to deploy directly to Hugging Face Spaces using Docke
 ---
 
 <div align="center">
-<b>💎 Crafted in Classy Style by DEVANAND A 💎</b><br>
+<b>💎 Work Done by DEVANAND A 💎</b><br>
 B.Tech – Artificial Intelligence and Machine Learning<br>
 Sri Shakthi Institute of Engineering and Technology
 </div>
